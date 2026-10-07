@@ -1,0 +1,157 @@
+{
+  "drop": "00",
+  "categories": [
+    { "id": "tenis", "name": "Tênis" },
+    { "id": "camisetas", "name": "Camisetas" },
+    { "id": "calcas", "name": "Calças & Shorts" },
+    { "id": "casacos", "name": "Casacos" },
+    { "id": "bones", "name": "Bonés" }
+  ],
+  "products": [
+    {
+      "no": "01",
+      "cat": "tenis",
+      "name": "Air Jordan 3 Retro",
+      "brand": "Nike · Jordan Brand",
+      "size": "42",
+      "price": 700,
+      "cond": 6,
+      "img": "jordan",
+      "note": "acompanha extra lace",
+      "feature": true
+    },
+    {
+      "no": "02",
+      "cat": "tenis",
+      "name": "Streetball",
+      "brand": "Adidas",
+      "price": 250,
+      "cond": 7.5,
+      "img": "streetball"
+    },
+    { "no": "03", "cat": "tenis", "name": "Air Force 1", "brand": "Nike", "price": 180, "cond": 5, "img": "af1" },
+    {
+      "no": "04",
+      "cat": "camisetas",
+      "name": "Camiseta “dnwr”",
+      "brand": "Zara",
+      "size": "M",
+      "price": 150,
+      "cond": 9,
+      "img": "zara-dnwr"
+    },
+    {
+      "no": "05",
+      "cat": "camisetas",
+      "name": "Camiseta Preta",
+      "brand": "Shein",
+      "size": "M",
+      "price": 50,
+      "cond": 9.8,
+      "img": "shein"
+    },
+    {
+      "no": "06",
+      "cat": "camisetas",
+      "name": "Celtics · Larry Bird",
+      "brand": "Mitchell & Ness",
+      "price": 100,
+      "cond": 7.5,
+      "img": "celtics"
+    },
+    {
+      "no": "07",
+      "cat": "camisetas",
+      "name": "Camiseta Branca",
+      "brand": "Zara",
+      "price": 100,
+      "cond": 9,
+      "img": "zara-branca"
+    },
+    {
+      "no": "08",
+      "cat": "camisetas",
+      "name": "ASSC × Playboy",
+      "brand": "Anti Social Social Club",
+      "price": 200,
+      "cond": 7.5,
+      "img": "assc"
+    },
+    {
+      "no": "09",
+      "cat": "calcas",
+      "name": "Calça Preta",
+      "brand": "Blue Steel",
+      "size": "42",
+      "price": 90,
+      "cond": 8,
+      "img": "bluesteel"
+    },
+    {
+      "no": "10",
+      "cat": "calcas",
+      "name": "Calça Slim",
+      "brand": "Zara",
+      "size": "42",
+      "price": 90,
+      "cond": 7,
+      "img": "zara-slim"
+    },
+    { "no": "11", "cat": "calcas", "name": "Short", "brand": "Palla World", "price": 50, "cond": 6, "img": "short" },
+    {
+      "no": "12",
+      "cat": "casacos",
+      "name": "Casaco",
+      "brand": "Zara",
+      "price": 100,
+      "cond": 8,
+      "img": "casaco",
+      "note": "a escrita da estampa saiu"
+    },
+    {
+      "no": "13",
+      "cat": "casacos",
+      "name": "Corta-vento",
+      "brand": "Nike",
+      "price": 150,
+      "cond": 7,
+      "img": "cortavento"
+    },
+    {
+      "no": "14",
+      "cat": "bones",
+      "name": "Boné Branco",
+      "brand": "Nike",
+      "price": 50,
+      "cond": null,
+      "img": "bone-nike"
+    },
+    {
+      "no": "15",
+      "cat": "bones",
+      "name": "Boné Trucker",
+      "brand": "Aéropostale",
+      "price": 30,
+      "cond": null,
+      "img": "bone-aero"
+    },
+    {
+      "no": "16",
+      "cat": "bones",
+      "name": "Boné Timberwolves",
+      "brand": "New Era",
+      "price": 100,
+      "cond": null,
+      "img": "bone-newera"
+    },
+    {
+      "no": "17",
+      "cat": "bones",
+      "name": "Boné “T”",
+      "brand": "Treze Clout",
+      "price": 100,
+      "cond": null,
+      "img": "bone-clout"
+    }
+  ]
+}

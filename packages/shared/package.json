@@ -1,0 +1,19 @@
+{
+  "name": "@otilc/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tipos, schemas Zod e regras puras compartilhadas entre a API e a loja.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --import tsx src/**/*.test.ts"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.6"
+  }
+}

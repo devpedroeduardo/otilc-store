@@ -1,0 +1,48 @@
+# Ambiente local completo: banco, API e loja.
+#   docker compose up -d db     -> só o Postgres (para rodar API e loja com npm run dev)
+#   docker compose up --build   -> tudo em contêineres
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: otilc
+      POSTGRES_PASSWORD: otilc
+      POSTGRES_DB: otilc
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U otilc']
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://otilc:otilc@db:5432/otilc
+      WEB_ORIGIN: http://localhost:3000
+      PORT: 3333
+    ports:
+      - '3333:3333'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3333
+    environment:
+      API_URL: http://api:3333
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

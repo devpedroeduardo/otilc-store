@@ -1,0 +1,9 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+package-lock.json
+apps/web/public
+apps/api/drizzle
+apps/api/src/db/seed-data

@@ -1,0 +1,30 @@
+{
+  "name": "otilc-store",
+  "private": true,
+  "description": "Loja completa da OTILC: API em NestJS, loja em Next.js, PostgreSQL e Pix.",
+  "packageManager": "npm@10.9.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "npm run db:migrate -w @otilc/api",
+    "db:seed": "npm run db:seed -w @otilc/api"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.3"
+  }
+}
