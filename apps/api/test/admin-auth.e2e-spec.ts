@@ -44,6 +44,9 @@ describe('Login de administrador (integração com Postgres)', () => {
     return sessionCookieFrom(res.headers['set-cookie']).split(';')[0];
   }
 
+  /** `Path=/` e nada mais (não aceita `Path=/api/admin`). */
+  const COOKIE_PATH_ROOT = /;\s*Path=\/(;|$)/;
+
   function sessionCookieFrom(header: unknown): string {
     const cookies = Array.isArray(header) ? header : [header];
     const found = cookies.find(
@@ -63,7 +66,8 @@ describe('Login de administrador (integração com Postgres)', () => {
       const setCookie = sessionCookieFrom(res.headers['set-cookie']);
       const token = /^otilc_admin=([^;]+);/.exec(setCookie)?.[1] ?? '';
       expect(Buffer.from(token, 'base64url')).toHaveLength(32);
-      expect(setCookie).toContain('Path=/api/admin');
+      // Path=/ exato (spec-007): as páginas /admin/** da loja também precisam receber o cookie.
+      expect(setCookie).toMatch(COOKIE_PATH_ROOT);
       expect(setCookie).toContain('Max-Age=28800');
       expect(setCookie).toContain('HttpOnly');
       expect(setCookie).toContain('SameSite=Strict');
@@ -239,7 +243,8 @@ describe('Login de administrador (integração com Postgres)', () => {
       const cleared = sessionCookieFrom(res.headers['set-cookie']);
       expect(cleared).toMatch(/^otilc_admin=;/);
       expect(cleared).toContain('Max-Age=0');
-      expect(cleared).toContain('Path=/api/admin');
+      // Mesmo Path=/ do login: um cookie limpo com outro path não apagaria o original.
+      expect(cleared).toMatch(COOKIE_PATH_ROOT);
       expect(cleared).toContain('HttpOnly');
       expect(cleared).toContain('SameSite=Strict');
 
