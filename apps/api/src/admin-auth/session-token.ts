@@ -2,7 +2,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 export const SESSION_COOKIE = 'otilc_admin';
-export const SESSION_COOKIE_PATH = '/api/admin';
+/** `Path=/`: o cookie vai para as páginas `/admin/**` da loja e para `/api/admin/**` (spec-007). */
+export const SESSION_COOKIE_PATH = '/';
 /** Validade da sessão e do cookie (ADR 0002 e docs/api/admin.md: `Max-Age=28800`). */
 export const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
