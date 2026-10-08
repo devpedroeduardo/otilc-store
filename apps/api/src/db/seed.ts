@@ -17,6 +17,30 @@ interface DropProduct {
   feature?: boolean;
 }
 
+/** Hosts de banco aceitos pela seed: máquina local, loopback e o serviço `db` do docker compose. */
+const LOCAL_DB_HOSTS = new Set(['localhost', '127.0.0.1', 'db']);
+
+/**
+ * Garante que a URL aponta para um banco local. A seed faz TRUNCATE em todas as tabelas, então
+ * só pode rodar contra `localhost`, `127.0.0.1` ou o serviço `db` do docker compose.
+ * Função pura (só recebe a URL) para poder ser testada sem banco.
+ */
+export function assertLocalDatabaseUrl(url: string): void {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    throw new Error('DATABASE_URL inválida: não foi possível identificar o host do banco.');
+  }
+
+  if (!LOCAL_DB_HOSTS.has(hostname)) {
+    throw new Error(
+      `Seed bloqueada: o host "${hostname || '(vazio)'}" do banco não é local. ` +
+        `Permitidos: ${[...LOCAL_DB_HOSTS].join(', ')}.`,
+    );
+  }
+}
+
 /** Transforma "Camiseta “dnwr”" em "camiseta-dnwr". */
 export function slugify(text: string): string {
   return text
@@ -84,6 +108,7 @@ export async function seed(db: Database): Promise<void> {
 if (require.main === module) {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('Defina DATABASE_URL.');
+  assertLocalDatabaseUrl(url);
   const { db, pool } = createDatabase(url);
   seed(db)
     .then(() =>
