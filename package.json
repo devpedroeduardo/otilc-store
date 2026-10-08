@@ -22,6 +22,9 @@
     "db:migrate": "npm run db:migrate -w @otilc/api",
     "db:seed": "npm run db:seed -w @otilc/api"
   },
+  "overrides": {
+    "postcss": "8.5.23"
+  },
   "devDependencies": {
     "prettier": "^3.6.2",
     "turbo": "^2.5.8",
