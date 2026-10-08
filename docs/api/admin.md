@@ -147,7 +147,7 @@ Todos os produtos, inclusive `DRAFT`, `RESERVED` e `SOLD_OUT`, do mais novo para
 
 ### `PATCH /api/admin/products/:id` — só OWNER
 
-Qualquer subconjunto dos campos do cadastro, com as mesmas regras. Atualiza `updatedAt`.
+Qualquer subconjunto **não vazio** dos campos do cadastro, com as mesmas regras (corpo vazio ou só com campos desconhecidos é `400`). Atualiza `updatedAt`.
 
 ```json
 { "priceCents": 9990, "featured": true }
@@ -191,7 +191,7 @@ A verificação deve ser feita no próprio `UPDATE` (`WHERE reserved <= novo est
 
 ### `GET /api/admin/orders`
 
-Query: `status` (opcional, um de `PENDING_PAYMENT`, `PAID`, `CANCELED`, `EXPIRED`, `SHIPPED`), `pagina` (padrão 1), `porPagina` (padrão 20, máximo 100). Do mais novo para o mais antigo.
+Query: `status` (opcional, um de `PENDING_PAYMENT`, `PAID`, `CANCELED`, `EXPIRED`, `SHIPPED`), `pagina` (padrão 1, de 1 a 500), `porPagina` (padrão 20, de 1 a 100). Do mais novo para o mais antigo.
 
 `GET /api/admin/orders?status=PAID&pagina=1`:
 
@@ -250,11 +250,13 @@ Query: `status` (opcional, um de `PENDING_PAYMENT`, `PAID`, `CANCELED`, `EXPIRED
 
 `200` com o `AdminOrderDetailDto` atualizado. Transições permitidas (`canTransitionOrder`); qualquer outra é `409`:
 
-| De                | Para       | Efeito no estoque da variação                            |
-| ----------------- | ---------- | -------------------------------------------------------- |
-| `PENDING_PAYMENT` | `PAID`     | `reserved -= qtd` e `stock -= qtd` (a unidade é vendida) |
-| `PENDING_PAYMENT` | `CANCELED` | `reserved -= qtd` (volta a ficar disponível)             |
-| `PAID`            | `SHIPPED`  | nenhum                                                   |
-| `PAID`            | `CANCELED` | `stock += qtd` (a peça volta ao estoque)                 |
+| De                | Para       | Efeito no estoque da variação                            | Efeito no pagamento                      |
+| ----------------- | ---------- | -------------------------------------------------------- | ---------------------------------------- |
+| `PENDING_PAYMENT` | `PAID`     | `reserved -= qtd` e `stock -= qtd` (a unidade é vendida) | nenhum (só registra o status)            |
+| `PENDING_PAYMENT` | `CANCELED` | `reserved -= qtd` (volta a ficar disponível)             | nenhum (não houve pagamento)             |
+| `PAID`            | `SHIPPED`  | nenhum                                                   | nenhum                                   |
+| `PAID`            | `CANCELED` | `stock += qtd` (a peça volta ao estoque)                 | **não estorna**: o estorno é feito à mão |
+
+`PAID → CANCELED` devolve a peça ao estoque, mas **não** devolve o dinheiro ao cliente. Enquanto não existir integração de pagamento, o estorno é manual, feito pelo dono fora da loja.
 
 `EXPIRED` só é aplicado pelo job de expiração, nunca pelo painel. A mudança de status e o ajuste de estoque acontecem na mesma transação, com `UPDATE … WHERE status = <de>`: se o job ou outro admin mudou o pedido no meio, a resposta é `409` e nada é alterado.
