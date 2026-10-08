@@ -5,6 +5,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Espera 7 dias antes de propor uma versão recém-publicada (tempo para versões maliciosas serem descobertas).
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ['*']
