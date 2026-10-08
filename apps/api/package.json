@@ -13,7 +13,8 @@
     "test:e2e": "jest --config jest.config.js --selectProjects e2e --runInBand",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
-    "db:seed": "tsx --env-file-if-exists=.env src/db/seed.ts"
+    "db:seed": "tsx --env-file-if-exists=.env src/db/seed.ts",
+    "admin:create": "tsx --env-file-if-exists=.env src/scripts/create-admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",
