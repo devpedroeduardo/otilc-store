@@ -1,5 +1,6 @@
 # spec-002 — Login de administrador na API
 
+- Papel: `backend`
 - Agente sugerido: Claude Code
 - Depende de: spec-001
 - Pode rodar em paralelo com: spec-003, spec-004

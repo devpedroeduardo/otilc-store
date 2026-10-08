@@ -1,5 +1,6 @@
 # spec-NNN — Título curto
 
+- Papel: (backend / frontend / seguranca / ...) — ver docs/agents/roles/
 - Agente sugerido: (Claude Code / Codex / outro)
 - Depende de: spec-XXX (ou "nenhuma")
 - Pode rodar em paralelo com: spec-YYY
