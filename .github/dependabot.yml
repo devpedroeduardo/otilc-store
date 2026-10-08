@@ -1,0 +1,10 @@
+# Mantém as actions fixadas por SHA atualizadas: o Dependabot abre PR quando sai versão nova.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
