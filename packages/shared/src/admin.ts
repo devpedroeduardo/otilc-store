@@ -76,8 +76,12 @@ export const adminProductInputSchema = z.object({
 });
 export type AdminProductInput = z.infer<typeof adminProductInputSchema>;
 
-/** Edição parcial de produto: qualquer subconjunto dos campos do cadastro. */
-export const adminProductPatchSchema = adminProductInputSchema.partial();
+/** Edição parcial de produto: qualquer subconjunto não vazio dos campos do cadastro. */
+export const adminProductPatchSchema = adminProductInputSchema
+  .partial()
+  .refine((patch) => Object.values(patch).some((value) => value !== undefined), {
+    message: 'Informe pelo menos um campo para alterar.',
+  });
 export type AdminProductPatch = z.infer<typeof adminProductPatchSchema>;
 
 export const adminVariantInputSchema = z.object({

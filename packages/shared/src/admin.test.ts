@@ -101,6 +101,14 @@ test('edição parcial aceita só um campo, mas mantém as regras', () => {
   assert.equal(adminProductPatchSchema.safeParse({ priceCents: 0 }).success, false);
 });
 
+test('edição parcial recusa corpo vazio', () => {
+  assert.equal(adminProductPatchSchema.safeParse({}).success, false);
+  assert.equal(adminProductPatchSchema.safeParse({ name: undefined }).success, false);
+  assert.equal(adminProductPatchSchema.safeParse({ campoDesconhecido: 1 }).success, false);
+  assert.equal(adminProductPatchSchema.safeParse({ featured: false }).success, true);
+  assert.equal(adminProductPatchSchema.safeParse({ brand: null }).success, true);
+});
+
 test('variação e estoque recusam estoque negativo ou fracionado', () => {
   const variant = { sku: 'CAM-VA-P', size: 'P', stock: 3 };
   assert.equal(adminVariantInputSchema.safeParse(variant).success, true);
