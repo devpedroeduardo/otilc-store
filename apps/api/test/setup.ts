@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import { sql } from 'drizzle-orm';
 import { createApp } from '../src/bootstrap';
 import { loadEnv } from '../src/config/env';
 import { createDatabase, type Database } from '../src/db/client';
@@ -35,4 +36,5 @@ export async function teardownTestApp(ctx: TestContext): Promise<void> {
 
 export async function resetData(db: Database): Promise<void> {
   await seed(db);
+  await db.execute(sql`TRUNCATE admin_sessions, admin_users`);
 }

@@ -1,6 +1,7 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { AdminAuthModule } from './admin-auth/admin-auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ENV, type Env } from './config/env';
 import { DatabaseModule } from './db/database.module';
@@ -24,6 +25,7 @@ export class AppModule {
         DatabaseModule,
         CatalogModule,
         OrdersModule,
+        AdminAuthModule,
       ],
       controllers: [HealthController],
       providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
