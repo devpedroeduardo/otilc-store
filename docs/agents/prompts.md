@@ -11,7 +11,7 @@ Você vai executar a spec em specs/NNN-NOME.md.
 1. Leia AGENTS.md e a spec inteira antes de começar.
 2. Resuma em até 5 linhas o seu plano e liste os arquivos que vai criar ou alterar. Confirme que todos estão em "Arquivos permitidos". Espere meu "ok".
 3. Implemente com commits pequenos (Conventional Commits).
-4. Rode pnpm lint && pnpm typecheck && pnpm test até tudo ficar verde.
+4. Rode npm run format:check && npm run typecheck && npm test (e npm run test:e2e se mexeu na API) até tudo ficar verde.
 5. Abra o PR com título "[spec-NNN] ..." usando o template, marcando cada critério de aceite.
 
 Se precisar alterar algo fora do escopo, ou se o contrato parecer errado, pare e me explique em vez de mudar.

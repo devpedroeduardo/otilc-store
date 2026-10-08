@@ -5,20 +5,20 @@ Preencha durante o teste. No fim, a decisão sai dos números, não da empolgaç
 ## Por spec
 
 | Spec | Agente | Tempo até PR | Iterações de correção | CI verde de primeira? | Saiu do escopo? | Bloqueantes na revisão | Uso/tokens (card da Alethe) |
-|------|--------|--------------|-----------------------|-----------------------|-----------------|------------------------|-----------------------------|
-| 000  |        |              |                       |                       |                 |                        |                             |
+| ---- | ------ | ------------ | --------------------- | --------------------- | --------------- | ---------------------- | --------------------------- |
 | 001  |        |              |                       |                       |                 |                        |                             |
 | 002  |        |              |                       |                       |                 |                        |                             |
 | 003  |        |              |                       |                       |                 |                        |                             |
 | 004  |        |              |                       |                       |                 |                        |                             |
 | 005  |        |              |                       |                       |                 |                        |                             |
+| 006  |        |              |                       |                       |                 |                        |                             |
 
 ## Paralelismo (rodada 002 + 003 + 004)
 
 - Tempo total do início da rodada até os três PRs mergeados:
 - Quanto tempo você **sozinho** levaria para as três (estimativa honesta):
 - Conflitos de merge entre os três PRs (quantos, e em quais arquivos):
-- Divergências entre api e web encontradas na spec-005:
+- Divergências entre API e web encontradas na spec-006:
 - Tempo que você passou revisando (somado):
 
 ## A ferramenta
@@ -26,6 +26,7 @@ Preencha durante o teste. No fim, a decisão sai dos números, não da empolgaç
 Notas de 1 a 5:
 
 - Facilidade para acompanhar vários agentes ao mesmo tempo:
+- Funcionamento com o projeto dentro do WSL:
 - Retomada de sessão depois de fechar/reabrir:
 - Painel de git/worktrees e revisão de PR:
 - Gestão de MCP compartilhado entre agentes:

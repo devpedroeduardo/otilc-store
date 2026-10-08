@@ -1,10 +1,10 @@
 ## Spec
 
-[spec-NNN](../specs/NNN-....md)
+<!-- Link para a spec, ex.: specs/002-api-auth-admin.md. PR sem spec: explique o motivo. -->
 
 ## Agente
 
-- Escrito por: (Claude Code / Codex / ...)
+- Escrito por: (Claude Code / Codex / ... / humano)
 - Revisado por agente: (outro agente, não o autor)
 
 ## O que mudou
@@ -19,15 +19,15 @@ Copie a lista da spec e marque o que foi atendido:
 
 ## Fora do escopo / pendências
 
-- Algo que precisou ficar de fora ou divergência encontrada no contrato:
+- Algo que ficou de fora ou divergência encontrada no contrato:
 
-## Dependências novas
+## Dependências novas ou atualizadas
 
-- Nenhuma / (nome — motivo — alternativa considerada)
+- Nenhuma / (nome — versão — motivo — alternativa considerada)
 
 ## Checklist do humano antes do merge
 
-- [ ] CI verde (qualidade, gitleaks, Semgrep, dependências)
+- [ ] CI e Segurança verdes
 - [ ] Só arquivos permitidos pela spec foram alterados
 - [ ] Li o diff inteiro, não só o resumo do agente
-- [ ] Rodei localmente o que importa
+- [ ] Se mexeu em pedidos/estoque/auth: rodei `npm run test:e2e` localmente
