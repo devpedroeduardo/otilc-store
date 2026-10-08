@@ -25,6 +25,8 @@ export const orderStatus = pgEnum('order_status', [
   'SHIPPED',
 ]);
 
+export const adminRole = pgEnum('admin_role', ['OWNER', 'STAFF']);
+
 export const categories = pgTable('categories', {
   id: serial('id').primaryKey(),
   slug: varchar('slug', { length: 40 }).notNull().unique(),
@@ -145,6 +147,43 @@ export const orderItems = pgTable(
   ],
 );
 
+/** Usuários do painel administrativo. Criados só pelo script de linha de comando (ADR 0002). */
+export const adminUsers = pgTable(
+  'admin_users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: varchar('email', { length: 160 }).notNull().unique(),
+    name: varchar('name', { length: 120 }).notNull(),
+    // Hash scrypt com sal aleatório. Nunca sai da API.
+    passwordHash: text('password_hash').notNull(),
+    role: adminRole('role').notNull(),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('admin_users_email_lowercase', sql`${t.email} = lower(${t.email})`)],
+);
+
+/**
+ * Sessões do painel. Guarda só o hash SHA-256 (hex, 64 caracteres) do token do cookie:
+ * vazar a tabela não permite se passar por um admin.
+ */
+export const adminSessions = pgTable(
+  'admin_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => adminUsers.id, { onDelete: 'cascade' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('admin_sessions_expires_idx').on(t.expiresAt),
+    index('admin_sessions_user_idx').on(t.userId),
+  ],
+);
+
 export const categoriesRelations = relations(categories, ({ many }) => ({
   products: many(products),
 }));
@@ -170,4 +209,12 @@ export const ordersRelations = relations(orders, ({ many }) => ({
 export const orderItemsRelations = relations(orderItems, ({ one }) => ({
   order: one(orders, { fields: [orderItems.orderId], references: [orders.id] }),
   variant: one(variants, { fields: [orderItems.variantId], references: [variants.id] }),
+}));
+
+export const adminUsersRelations = relations(adminUsers, ({ many }) => ({
+  sessions: many(adminSessions),
+}));
+
+export const adminSessionsRelations = relations(adminSessions, ({ one }) => ({
+  user: one(adminUsers, { fields: [adminSessions.userId], references: [adminUsers.id] }),
 }));
