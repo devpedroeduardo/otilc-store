@@ -1,5 +1,6 @@
 # spec-004 — Vulnerabilidades de dependências e trava da seed
 
+- Papel: `seguranca`
 - Agente sugerido: terceiro agente (OpenCode, Copilot CLI ou Cursor) — bom para comparar com os outros
 - Depende de: nenhuma
 - Pode rodar em paralelo com: spec-002, spec-003 (atenção: se a 003 mexer no `package-lock.json` ao mesmo tempo, quem fizer merge depois refaz o `npm install`)

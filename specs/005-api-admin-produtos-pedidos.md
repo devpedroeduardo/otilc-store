@@ -1,5 +1,6 @@
 # spec-005 — Endpoints de produtos, estoque e pedidos do admin
 
+- Papel: `backend`
 - Agente sugerido: o que se saiu melhor na rodada 002/003/004
 - Depende de: spec-002 (usa o guard e o decorator de papel)
 - Pode rodar em paralelo com: nada (a 006 precisa dela)

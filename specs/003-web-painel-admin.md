@@ -1,5 +1,6 @@
 # spec-003 — Telas do painel administrativo (web)
 
+- Papel: `frontend`
 - Agente sugerido: Codex
 - Depende de: spec-001
 - Pode rodar em paralelo com: spec-002, spec-004

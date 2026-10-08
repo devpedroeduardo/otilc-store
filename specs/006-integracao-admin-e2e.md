@@ -1,5 +1,6 @@
 # spec-006 — Painel ligado na API + testes E2E com Playwright
 
+- Papel: `frontend`
 - Agente sugerido: Claude Code ou Codex
 - Depende de: spec-003, spec-005
 - Pode rodar em paralelo com: nada
