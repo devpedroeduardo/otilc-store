@@ -20,12 +20,14 @@
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d db",
     "db:migrate": "npm run db:migrate -w @otilc/api",
-    "db:seed": "npm run db:seed -w @otilc/api"
+    "db:seed": "npm run db:seed -w @otilc/api",
+    "test:e2e:web": "npm run build -w @otilc/shared && tsc -p e2e/tsconfig.json && playwright test"
   },
   "overrides": {
     "postcss": "8.5.23"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "prettier": "^3.6.2",
     "turbo": "^2.5.8",
     "typescript": "^5.9.3"
