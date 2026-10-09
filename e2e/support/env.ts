@@ -9,7 +9,7 @@ export const WEB_URL = `http://localhost:${WEB_PORT}`;
 
 /** Banco exclusivo dos testes E2E do navegador. */
 export const E2E_DATABASE_URL =
-  process.env.E2E_DATABASE_URL ?? 'postgres://otilc:otilc@localhost:5432/otilc_test_006';
+  process.env.E2E_DATABASE_URL ?? 'postgres://otilc:otilc@localhost:5432/otilc_test_e2e';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
