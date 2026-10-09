@@ -10,7 +10,7 @@ import {
   serial,
   text,
   timestamp,
-  uniqueIndex,
+  unique,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -85,7 +85,8 @@ export const variants = pgTable(
   },
   (t) => [
     index('variants_product_idx').on(t.productId),
-    uniqueIndex('variants_product_size_color_idx').on(t.productId, t.size, t.color),
+    // NULLS NOT DISTINCT: duas variações do mesmo produto e tamanho sem cor também colidem.
+    unique('variants_product_size_color_idx').on(t.productId, t.size, t.color).nullsNotDistinct(),
     check('variants_stock_non_negative', sql`${t.stock} >= 0`),
     check('variants_reserved_range', sql`${t.reserved} >= 0 AND ${t.reserved} <= ${t.stock}`),
   ],
