@@ -4,6 +4,7 @@ import request from 'supertest';
 import type { AdminRole, OrderStatus } from '@otilc/shared';
 import { AdminAuthService } from '../src/admin-auth/admin-auth.service';
 import { createAdminUser } from '../src/admin-auth/new-admin';
+import { AdminOrdersService } from '../src/admin-orders/admin-orders.service';
 import { SESSION_COOKIE } from '../src/admin-auth/session-token';
 import { orders, products, variants } from '../src/db/schema';
 import { OrdersService } from '../src/orders/orders.service';
@@ -308,6 +309,73 @@ describe('Admin: pedidos e mudança de status (integração com Postgres)', () =
         cancels.filter((r) => r.status === 200).length,
       );
       expect(await stockOf(v.id)).toEqual({ stock: 10, reserved: 1 });
+    });
+
+    it('pagar e expirar ao mesmo tempo: cada pedido termina PAID ou EXPIRED, nunca os dois', async () => {
+      const ROUNDS = 8;
+      const ORDERS_PER_ROUND = 4;
+      const initialStock = ROUNDS * ORDERS_PER_ROUND;
+      const a = await variantWithStock('05-camiseta-preta', initialStock);
+      const b = await variantWithStock('07-camiseta-branca', initialStock);
+      const service = ctx.app.get(OrdersService);
+      const admin = ctx.app.get(AdminOrdersService);
+      const updateStatus = admin.updateStatus.bind(admin);
+      const outcomes: { status: number; final: OrderStatus }[] = [];
+
+      for (let round = 0; round < ROUNDS; round++) {
+        const ids: string[] = [];
+        for (let i = 0; i < ORDERS_PER_ROUND; i++) {
+          ids.push(
+            await placeOrder([
+              { variantId: a.id, quantity: 1 },
+              { variantId: b.id, quantity: 1 },
+            ]),
+          );
+        }
+        // Prazo ainda valendo para o banco (o painel pode pagar), mas vencido para o relógio que
+        // o job recebe (+31 min): os dois lados acham que podem agir.
+        await ctx.db
+          .update(orders)
+          .set({ expiresAt: new Date(Date.now() + 5 * 60_000) })
+          .where(inArray(orders.id, ids));
+
+        // Chamado direto, o job sempre chegaria antes do PATCH (que passa por HTTP e sessão).
+        // Ele dispara quando o k-ésimo PATCH entra no serviço, com k mudando a cada rodada:
+        // assim o SELECT ... FOR UPDATE do job cai no meio dos UPDATEs do painel, sem sleep.
+        const k = (round % ORDERS_PER_ROUND) + 1;
+        let entered = 0;
+        const spy = jest.spyOn(admin, 'updateStatus');
+        const jobStart = new Promise<void>((resolve) => {
+          spy.mockImplementation((id, to) => {
+            if (++entered === k) resolve();
+            return updateStatus(id, to);
+          });
+        });
+        try {
+          const [patches] = await Promise.all([
+            Promise.all(ids.map((id) => setStatus(id, 'PAID'))),
+            jobStart.then(() => service.releaseExpired(new Date(Date.now() + 31 * 60_000))),
+          ]);
+          for (const [i, id] of ids.entries()) {
+            outcomes.push({ status: patches[i].status, final: await statusOf(id) });
+          }
+        } finally {
+          spy.mockRestore();
+        }
+      }
+
+      for (const outcome of outcomes) {
+        expect([
+          { status: 200, final: 'PAID' },
+          { status: 409, final: 'EXPIRED' },
+        ]).toContainEqual(outcome);
+      }
+      const paid = outcomes.filter((o) => o.final === 'PAID').length;
+      // Os dois desfechos aparecem: a corrida foi exercitada, não só um lado.
+      expect(paid).toBeGreaterThan(0);
+      expect(paid).toBeLessThan(outcomes.length);
+      expect(await stockOf(a.id)).toEqual({ stock: initialStock - paid, reserved: 0 });
+      expect(await stockOf(b.id)).toEqual({ stock: initialStock - paid, reserved: 0 });
     });
   });
 });
