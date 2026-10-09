@@ -35,6 +35,7 @@ npm run format:check         # Prettier (use npm run format para corrigir)
 npm run typecheck
 npm test                     # unitários
 npm run test:e2e             # integração (precisa do Postgres; usa o banco otilc_test)
+npm run test:e2e:web         # E2E no navegador com Playwright (sobe API e loja; usa o banco otilc_test_e2e)
 npm run build
 npm run db:generate -w @otilc/api   # gera migração SQL após mudar src/db/schema.ts
 ```
@@ -68,6 +69,7 @@ Se mexeu na API, rode também `npm run test:e2e`. Só conclua com tudo verde.
 - Web: Server Components por padrão; `"use client"` só com interação. Chamadas à API passam por `apps/web/src/lib/`.
 - Nomes de código e comentários técnicos em inglês ou português, seguindo o arquivo vizinho; textos exibidos ao usuário em português.
 - Formatação: Prettier do projeto (aspas simples, vírgula final, 100 colunas).
+- Regex sempre literal (`/^PAID /`). `new RegExp(...)` montado com variável é barrado pelo Semgrep do CI, inclusive em teste.
 
 ## Segurança (inegociável)
 
