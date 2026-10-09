@@ -18,7 +18,7 @@ export class AdminApiError extends Error {
 
 const owner: AdminUserDto = {
   id: 'admin-demo',
-  email: 'dono@otilc.com.br',
+  email: 'dono@example.com',
   name: 'Dono OTILC',
   role: 'OWNER',
 };
