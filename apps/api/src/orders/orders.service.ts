@@ -7,10 +7,11 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
-import { mergeCartItems, type CheckoutInput, type OrderDto } from '@otilc/shared';
+import type { CheckoutInput, OrderDto } from '@otilc/shared';
 import { ENV, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
 import { orderItems, orders, products, variants } from '../db/schema';
+import { lockOrder } from './lock-order';
 
 @Injectable()
 export class OrdersService {
@@ -30,10 +31,8 @@ export class OrdersService {
    * O preço vem sempre do banco, nunca do navegador.
    */
   async create(input: CheckoutInput): Promise<OrderDto> {
-    // Ordenar por id faz todas as transações travarem as linhas na mesma ordem (evita deadlock).
-    const items = mergeCartItems(input.items).sort((a, b) =>
-      a.variantId.localeCompare(b.variantId),
-    );
+    // Mesma ordem de trava do painel e do job de expiração (evita deadlock).
+    const items = lockOrder(input.items);
 
     return this.db.transaction(async (tx) => {
       const found = await tx
@@ -143,7 +142,7 @@ export class OrdersService {
   /**
    * Libera o estoque de pedidos que passaram do prazo sem pagamento.
    * `FOR UPDATE SKIP LOCKED` deixa várias instâncias da API rodarem isso ao mesmo tempo
-   * sem processar o mesmo pedido duas vezes.
+   * sem processar o mesmo pedido duas vezes. Trava os pedidos antes das variações, como o painel.
    */
   async releaseExpired(now = new Date()): Promise<number> {
     return this.db.transaction(async (tx) => {
@@ -155,12 +154,14 @@ export class OrdersService {
       if (expired.length === 0) return 0;
 
       const ids = expired.map((o) => o.id);
-      const items = await tx
+      const rows = await tx
         .select({ variantId: orderItems.variantId, quantity: orderItems.quantity })
         .from(orderItems)
         .where(inArray(orderItems.orderId, ids));
 
-      for (const item of items) {
+      // Itens de todos os pedidos da rodada somados por variação: cada variação é atualizada uma
+      // vez só, na mesma ordem do checkout e do painel (os itens voltam do banco em qualquer ordem).
+      for (const item of lockOrder(rows)) {
         await tx
           .update(variants)
           .set({ reserved: sql`GREATEST(${variants.reserved} - ${item.quantity}, 0)` })

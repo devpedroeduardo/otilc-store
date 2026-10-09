@@ -9,7 +9,6 @@ import {
 import { and, asc, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
 import {
   canTransitionOrder,
-  mergeCartItems,
   type AdminOrderDetailDto,
   type AdminOrderListItemDto,
   type AdminOrderQuery,
@@ -18,6 +17,7 @@ import {
 } from '@otilc/shared';
 import { DB, type Database } from '../db/client';
 import { orderItems, orders, variants } from '../db/schema';
+import { lockOrder } from '../orders/lock-order';
 
 type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 
@@ -102,7 +102,7 @@ export class AdminOrdersService {
    * outro admin mudou o pedido no meio, nenhuma linha muda e a resposta é 409. Esse UPDATE também
    * trava a linha do pedido até o fim da transação. Para pagar, o prazo tem de estar valendo
    * (`expires_at > now()`), mesmo que o job ainda não tenha marcado o pedido como EXPIRED.
-   * As variações são travadas na mesma ordem do checkout (ver `OrdersService.create`).
+   * As variações são travadas na mesma ordem do checkout e do job (ver `lockOrder`).
    */
   async updateStatus(id: string, to: OrderStatus): Promise<AdminOrderDetailDto> {
     return this.db.transaction(async (tx) => {
@@ -138,10 +138,8 @@ export class AdminOrdersService {
           .select({ variantId: orderItems.variantId, quantity: orderItems.quantity })
           .from(orderItems)
           .where(eq(orderItems.orderId, id));
-        // Mesmo merge e mesma chave de ordenação do checkout: todas as transações travam as
-        // variações na mesma ordem, o que evita deadlock entre painel e loja.
-        const items = mergeCartItems(rows).sort((a, b) => a.variantId.localeCompare(b.variantId));
-        for (const item of items) {
+        // Mesma ordem de trava do checkout e do job de expiração (evita deadlock).
+        for (const item of lockOrder(rows)) {
           const { set, guard } = effect(item.quantity);
           const adjusted = await tx
             .update(variants)
