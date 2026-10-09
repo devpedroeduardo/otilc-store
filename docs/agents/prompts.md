@@ -25,14 +25,34 @@ O passo 2 (plano + "ok") custa 1 minuto e evita o maior desperdício de tokens: 
 
 ## Prompt de revisão cruzada
 
-Use um agente de **outro fornecedor** que não o autor (ex.: Codex revisa PR do Claude Code e vice-versa), na worktree da spec.
+Use um agente de **outro fornecedor** que não o autor (ver `routing.md`), na worktree da spec, **sem poder de escrita**.
+
+Antes, no shell da worktree:
+
+```bash
+git fetch origin
+git status                       # limpo e em dia com a branch remota
+gh pr view NN > /tmp/pr-NN.md    # o revisor em modo só leitura não chama o gh
+codex --sandbox read-only        # ou: claude --permission-mode plan
+```
 
 ```text
 Atue conforme docs/agents/roles/revisor.md.
-Revise o que a branch atual mudou em relação a origin/main, contra specs/NNN-NOME.md, AGENTS.md e as ADRs citadas.
+Revise tudo o que a branch atual mudou em relação a origin/main (git diff origin/main...HEAD), contra specs/NNN-NOME.md, AGENTS.md e as ADRs citadas. A descrição do PR está em /tmp/pr-NN.md.
+Não altere nenhum arquivo.
+Entregue nesta ordem:
+1. Bloqueadores (o que impede o merge), com arquivo:linha e por quê.
+2. Sugestões (melhorias que podem virar spec futura).
+3. Cada critério de aceite da spec: atendido / não atendido, com a evidência (arquivo:linha).
+4. Escopo: algum arquivo fora de "Arquivos permitidos"?
+5. Veredito: aprovar, aprovar com sugestões ou pedir mudanças.
 ```
 
-Lição da spec-001: um revisor que só confere a spec acha pouco. O papel `revisor` obriga a segunda pergunta ("o design tem buracos?").
+Lições:
+
+- Spec-001: um revisor que só confere a spec acha pouco. O papel `revisor` obriga a segunda pergunta ("o design tem buracos?").
+- Spec-006: sem a descrição do PR, o revisor não confere o critério "PR lista as divergências". Daí o `/tmp/pr-NN.md`.
+- Triagem do humano: **bloqueador** volta ao autor; **sugestão** vira spec futura ou é descartada com motivo.
 
 ## Prompt de correção após revisão
 

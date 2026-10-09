@@ -13,6 +13,7 @@ Como usar vários agentes de IA em paralelo neste repositório (testando a Aleth
 | `specs/001` a `006`                | Tarefas do teste: painel administrativo + segurança              |
 | `docs/agents/prompts.md`           | Prompts de execução, revisão cruzada e correção                  |
 | `docs/agents/scorecard.md`         | Ficha para decidir se a Alethe fica                              |
+| `docs/agents/routing.md`           | Qual agente executa e qual revisa cada papel, com evidência      |
 | `scripts/new-task.sh`              | Cria worktree + branch + banco de teste próprio para uma spec    |
 | `.github/workflows/security.yml`   | Gitleaks, Semgrep e `npm audit` (complementa o `ci.yml`)         |
 | `.github/pull_request_template.md` | Template de PR com checklist do humano                           |
