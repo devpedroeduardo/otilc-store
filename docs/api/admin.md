@@ -80,13 +80,13 @@ Público, mas sujeito ao CSRF por `Origin`. Limite: **5 tentativas por minuto po
 O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, senha errada e usuário inativo devolvem o **mesmo** `401` com a mesma mensagem.
 
 ```json
-{ "email": "dono@otilc.com.br", "password": "uma-senha-bem-longa" }
+{ "email": "dono@example.com", "password": "teste-nao-e-uma-senha-real" }
 ```
 
 `200`, com `Set-Cookie: otilc_admin=<token>; Path=/; Max-Age=28800; HttpOnly; SameSite=Strict` (+ `Secure` em produção):
 
 ```json
-{ "id": "6f1c…", "email": "dono@otilc.com.br", "name": "Dono", "role": "OWNER" }
+{ "id": "6f1c…", "email": "dono@example.com", "name": "Dono", "role": "OWNER" }
 ```
 
 `401`: `{ "statusCode": 401, "message": "E-mail ou senha inválidos.", "error": "Unauthorized" }`
