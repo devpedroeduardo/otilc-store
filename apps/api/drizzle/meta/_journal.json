@@ -15,6 +15,13 @@
       "when": 1791493258442,
       "tag": "0001_admin_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791506674733,
+      "tag": "0002_variants_nulls_not_distinct",
+      "breakpoints": true
     }
   ]
 }
