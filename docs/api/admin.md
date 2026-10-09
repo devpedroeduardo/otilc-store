@@ -8,7 +8,7 @@ Schemas e DTOs citados aqui estão em [`packages/shared/src/admin.ts`](../../pac
 ### Sessão e cookie
 
 - O login cria uma linha em `admin_sessions` com o **hash SHA-256** (hex) de um token aleatório de 32 bytes. O token puro só existe no cookie.
-- Cookie `otilc_admin`: `HttpOnly`, `SameSite=Strict`, `Secure` em produção, `Path=/api/admin`, `Max-Age=28800` (8 horas). A sessão no banco expira no mesmo instante (`expires_at`).
+- Cookie `otilc_admin`: `HttpOnly`, `SameSite=Strict`, `Secure` em produção, `Path=/`, `Max-Age=28800` (8 horas). A sessão no banco expira no mesmo instante (`expires_at`).
 - Toda rota, exceto `POST /api/admin/session`, exige sessão válida: cookie presente, hash encontrado, `expires_at` no futuro e usuário `active`. Caso contrário: `401`.
 - O navegador fala com a API pela **origem da loja**: o Next.js reescreve `/api/admin/:path*` para `${API_URL}/api/admin/:path*`. O CORS da API continua fechado.
 
@@ -83,7 +83,7 @@ O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, 
 { "email": "dono@otilc.com.br", "password": "uma-senha-bem-longa" }
 ```
 
-`200`, com `Set-Cookie: otilc_admin=<token>; Path=/api/admin; Max-Age=28800; HttpOnly; SameSite=Strict` (+ `Secure` em produção):
+`200`, com `Set-Cookie: otilc_admin=<token>; Path=/; Max-Age=28800; HttpOnly; SameSite=Strict` (+ `Secure` em produção):
 
 ```json
 { "id": "6f1c…", "email": "dono@otilc.com.br", "name": "Dono", "role": "OWNER" }
@@ -93,7 +93,7 @@ O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, 
 
 ### `DELETE /api/admin/session` — logout
 
-Apaga a sessão do banco e responde `204` com o cookie expirado (`Max-Age=0`, mesmos atributos). Revogação é imediata.
+Apaga a sessão do banco e responde `204` com o cookie expirado (`Max-Age=0`, mesmos atributos, inclusive `Path=/`). Revogação é imediata.
 
 ### `GET /api/admin/me`
 
