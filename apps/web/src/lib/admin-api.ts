@@ -6,17 +6,10 @@ import type {
   AdminVariantDto,
   Paginated,
 } from '@otilc/shared';
-import { mockAdminApi } from './admin-api.mock';
+import { mockAdminApi, AdminApiError } from './admin-api.mock';
 
 const mock = process.env.NEXT_PUBLIC_ADMIN_MOCK === '1';
-export class AdminApiError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { AdminApiError };
 
 async function request<T>(path: string, init?: RequestInit, cookie?: string): Promise<T> {
   const headers = {

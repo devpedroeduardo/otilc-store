@@ -1,14 +1,23 @@
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { adminApi } from '@/lib/admin-api';
-import { formatBRL } from '@otilc/shared';
+import { adminOrderQuerySchema, formatBRL } from '@otilc/shared';
 const statuses = ['PENDING_PAYMENT', 'PAID', 'CANCELED', 'EXPIRED', 'SHIPPED'];
 export default async function OrdersPage({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
-  const status = (await searchParams).status;
+  const parsedQuery = adminOrderQuerySchema.safeParse(await searchParams);
+  if (!parsedQuery.success) {
+    return (
+      <>
+        <h1 className="page-title">Pedidos</h1>
+        <p className="alert error">O filtro de status informado é inválido.</p>
+      </>
+    );
+  }
+  const status = parsedQuery.data.status;
   let page;
   try {
     page = await adminApi.orders(status, (await cookies()).toString());

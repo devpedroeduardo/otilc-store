@@ -7,6 +7,15 @@ import type {
   Paginated,
 } from '@otilc/shared';
 
+export class AdminApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 const owner: AdminUserDto = {
   id: 'admin-demo',
   email: 'dono@otilc.com.br',
@@ -100,8 +109,9 @@ export const mockAdminApi = {
       products.flatMap((item) => item.variants).find((item) => item.id === id) ??
       products[0]!.variants[0]!;
     if (stock < variant.reserved)
-      throw new Error(
-        `409: O estoque não pode ficar abaixo das ${variant.reserved} unidades reservadas.`,
+      throw new AdminApiError(
+        409,
+        `O estoque não pode ficar abaixo das ${variant.reserved} unidades reservadas.`,
       );
     variant.stock = stock;
     return variant;

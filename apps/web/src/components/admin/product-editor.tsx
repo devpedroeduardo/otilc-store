@@ -10,7 +10,7 @@ import {
   type AdminProductDto,
   type AdminRole,
 } from '@otilc/shared';
-import { adminApi } from '@/lib/admin-api';
+import { adminApi, AdminApiError } from '@/lib/admin-api';
 export function ProductEditor({
   product,
   role,
@@ -36,7 +36,7 @@ export function ProductEditor({
       description: data.get('description') || null,
       note: data.get('note') || null,
       priceCents: Number(data.get('priceCents')),
-      condition: null,
+      condition: data.get('condition') === '' ? null : Number(data.get('condition')),
       status: data.get('status'),
       featured: data.get('featured') === 'on',
       categorySlug: data.get('categorySlug'),
@@ -81,7 +81,7 @@ export function ProductEditor({
       setError(e instanceof Error ? e.message : 'Não foi possível criar variação.');
     }
   }
-  async function stock(event: React.FormEvent<HTMLFormElement>, id: string, reserved: number) {
+  async function stock(event: React.FormEvent<HTMLFormElement>, id: string) {
     event.preventDefault();
     setError('');
     const data = new FormData(event.currentTarget);
@@ -94,8 +94,17 @@ export function ProductEditor({
       await adminApi.updateStock(id, parsed.data.stock);
       setNotice('Estoque atualizado.');
       router.refresh();
-    } catch {
-      setError(`O estoque não pode ficar abaixo das ${reserved} unidades reservadas.`);
+    } catch (e) {
+      if (e instanceof AdminApiError && e.status === 401) {
+        router.replace('/admin/login');
+        router.refresh();
+        return;
+      }
+      if (e instanceof AdminApiError && e.status === 409) {
+        setError(e.message);
+        return;
+      }
+      setError('Não foi possível atualizar o estoque. Tente novamente.');
     }
   }
   return (
@@ -127,6 +136,22 @@ export function ProductEditor({
           <textarea
             name="description"
             defaultValue={product?.description ?? ''}
+            disabled={!owner}
+          />
+        </label>
+        <label className="field">
+          Observação
+          <input name="note" defaultValue={product?.note ?? ''} disabled={!owner} />
+        </label>
+        <label className="field">
+          Condição (0 a 10)
+          <input
+            name="condition"
+            type="number"
+            min="0"
+            max="10"
+            step="0.1"
+            defaultValue={product?.condition ?? ''}
             disabled={!owner}
           />
         </label>
@@ -171,7 +196,7 @@ export function ProductEditor({
             <form
               className="admin-variant"
               key={variant.id}
-              onSubmit={(event) => stock(event, variant.id, variant.reserved)}
+              onSubmit={(event) => stock(event, variant.id)}
             >
               <span>
                 {variant.sku} · {variant.size} · reservado {variant.reserved}

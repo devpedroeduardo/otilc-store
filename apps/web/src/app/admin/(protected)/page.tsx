@@ -2,8 +2,10 @@ import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { adminApi } from '@/lib/admin-api';
 import { formatBRL } from '@otilc/shared';
+import { canRole } from '@otilc/shared';
 export default async function ProductsPage() {
   let products;
+  const user = await adminApi.session((await cookies()).toString());
   try {
     products = await adminApi.products((await cookies()).toString());
   } catch {
@@ -21,9 +23,11 @@ export default async function ProductsPage() {
           <p className="mono muted">CATÁLOGO</p>
           <h1 className="page-title">Produtos</h1>
         </div>
-        <Link className="btn btn-solid" href="/admin/products/new">
-          Novo produto
-        </Link>
+        {user && canRole(user.role, 'product:create') && (
+          <Link className="btn btn-solid" href="/admin/products/new">
+            Novo produto
+          </Link>
+        )}
       </div>
       {products.length === 0 ? (
         <p className="empty">Nenhum produto cadastrado.</p>
