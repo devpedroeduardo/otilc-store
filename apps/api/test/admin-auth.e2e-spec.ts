@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 import type { AdminRole } from '@otilc/shared';
@@ -8,8 +9,9 @@ import { adminSessions, adminUsers } from '../src/db/schema';
 import { resetData, setupTestApp, teardownTestApp, type TestContext } from './setup';
 
 const WEB_ORIGIN = 'http://localhost:3000';
-const PASSWORD = 'uma-senha-bem-longa';
-const OWNER = { email: 'dono@otilc.com.br', name: 'Dono', role: 'OWNER' as AdminRole };
+const PASSWORD = randomBytes(24).toString('base64url');
+const WRONG_PASSWORD = randomBytes(24).toString('base64url');
+const OWNER = { email: 'dono@example.test', name: 'Dono', role: 'OWNER' as AdminRole };
 
 describe('Login de administrador (integração com Postgres)', () => {
   let ctx: TestContext;
@@ -60,7 +62,7 @@ describe('Login de administrador (integração com Postgres)', () => {
     it('cria a sessão, devolve o AdminUserDto e o cookie com os atributos da ADR', async () => {
       const user = await createOwner();
 
-      const res = await login({ email: '  Dono@OTILC.com.br ', password: PASSWORD }).expect(200);
+      const res = await login({ email: '  Dono@Example.test ', password: PASSWORD }).expect(200);
 
       expect(res.body).toEqual({ id: user.id, ...OWNER });
       const setCookie = sessionCookieFrom(res.headers['set-cookie']);
@@ -86,7 +88,7 @@ describe('Login de administrador (integração com Postgres)', () => {
     it('senha errada, e-mail inexistente e usuário inativo recebem o mesmo 401', async () => {
       await createOwner();
       await createAdminUser(ctx.db, {
-        email: 'inativo@otilc.com.br',
+        email: 'inativo@example.test',
         name: 'Inativo',
         role: 'STAFF',
         password: PASSWORD,
@@ -94,12 +96,12 @@ describe('Login de administrador (integração com Postgres)', () => {
       await ctx.db
         .update(adminUsers)
         .set({ active: false })
-        .where(eq(adminUsers.email, 'inativo@otilc.com.br'));
+        .where(eq(adminUsers.email, 'inativo@example.test'));
 
       const attempts = await Promise.all([
-        login({ email: OWNER.email, password: 'senha-errada-mas-longa' }),
-        login({ email: 'ninguem@otilc.com.br', password: PASSWORD }),
-        login({ email: 'inativo@otilc.com.br', password: PASSWORD }),
+        login({ email: OWNER.email, password: WRONG_PASSWORD }),
+        login({ email: 'ninguem@example.test', password: PASSWORD }),
+        login({ email: 'inativo@example.test', password: PASSWORD }),
       ]);
 
       for (const res of attempts) {
@@ -129,7 +131,7 @@ describe('Login de administrador (integração com Postgres)', () => {
     it('limita a 5 tentativas por minuto por IP (429)', async () => {
       await createOwner();
       const ip = '10.99.0.1';
-      const wrong = { email: OWNER.email, password: 'senha-errada-mas-longa' };
+      const wrong = { email: OWNER.email, password: WRONG_PASSWORD };
 
       for (let i = 0; i < 5; i++) await login(wrong, ip).expect(401);
       // Nem a senha certa passa depois do limite.
