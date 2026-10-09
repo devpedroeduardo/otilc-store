@@ -7,7 +7,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
-import { mergeCartItems, type CheckoutInput, type OrderDto } from '@otilc/shared';
+import type { CheckoutInput, OrderDto } from '@otilc/shared';
 import { ENV, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
 import { orderItems, orders, products, variants } from '../db/schema';
@@ -31,10 +31,8 @@ export class OrdersService {
    * O preço vem sempre do banco, nunca do navegador.
    */
   async create(input: CheckoutInput): Promise<OrderDto> {
-    // Ordenar por id faz todas as transações travarem as linhas na mesma ordem (evita deadlock).
-    const items = mergeCartItems(input.items).sort((a, b) =>
-      a.variantId.localeCompare(b.variantId),
-    );
+    // Mesma ordem de trava do painel e do job de expiração (evita deadlock).
+    const items = lockOrder(input.items);
 
     return this.db.transaction(async (tx) => {
       const found = await tx
