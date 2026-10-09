@@ -23,14 +23,21 @@ async function openOrder(page: Page, number: number): Promise<void> {
   await expect(page.getByText(`PEDIDO · #${number}`)).toBeVisible();
 }
 
+/** Linha de status do detalhe do pedido (regex literais: nada de RegExp montada com variável). */
+const STATUS_LINE = { PAID: /^PAID · /, CANCELED: /^CANCELED · / } as const;
+
 /** Muda o status pelo botão do painel e exige o 200 da API real (sem 403 do CSRF). */
-async function changeStatus(page: Page, button: string, expected: string): Promise<void> {
+async function changeStatus(
+  page: Page,
+  button: string,
+  expected: keyof typeof STATUS_LINE,
+): Promise<void> {
   const response = page.waitForResponse(
     (r) => /\/api\/admin\/orders\/[^/]+\/status$/.test(r.url()) && r.request().method() === 'PATCH',
   );
   await page.getByRole('button', { name: button }).click();
   expect((await response).status()).toBe(200);
-  await expect(page.locator('.panel').getByText(new RegExp(`^${expected} · `))).toBeVisible();
+  await expect(page.locator('.panel').getByText(STATUS_LINE[expected])).toBeVisible();
 }
 
 test('acessar /admin sem sessão redireciona para o login', async ({ page }) => {

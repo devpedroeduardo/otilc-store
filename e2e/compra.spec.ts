@@ -17,7 +17,7 @@ test('compra: catálogo → categoria → produto → carrinho → pedido com es
   await expect(grid.getByText('Air Jordan 3 Retro')).toHaveCount(0);
 
   await grid.getByRole('link', { name: /Camiseta Preta/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/produto/${SLUG}$`));
+  await expect(page).toHaveURL(/\/produto\/05-camiseta-preta$/);
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Camiseta Preta');
 
   await page.getByRole('button', { name: 'Adicionar ao carrinho' }).click();
