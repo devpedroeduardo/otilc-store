@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 import type { AdminRole } from '@otilc/shared';
@@ -8,7 +9,7 @@ import { orderItems, products, variants } from '../src/db/schema';
 import { resetData, setupTestApp, teardownTestApp, type TestContext } from './setup';
 
 const WEB_ORIGIN = 'http://localhost:3000';
-const PASSWORD = 'uma-senha-bem-longa';
+const PASSWORD = randomBytes(24).toString('base64url');
 const MISSING_ID = '00000000-0000-4000-8000-000000000000';
 const customer = { name: 'Ana Souza', email: 'ana@example.com', phone: '+5585999990000' };
 
@@ -44,7 +45,7 @@ describe('Admin: produtos, variações e estoque (integração com Postgres)', (
 
   /** Cria o admin e a sessão direto pelo serviço (sem passar pelo limite de login). */
   async function sessionCookie(role: AdminRole): Promise<string> {
-    const email = `${role.toLowerCase()}@otilc.com.br`;
+    const email = `${role.toLowerCase()}@example.test`;
     await createAdminUser(ctx.db, { email, name: role, role, password: PASSWORD });
     const { token } = await ctx.app.get(AdminAuthService).login({ email, password: PASSWORD });
     return `${SESSION_COOKIE}=${token}`;

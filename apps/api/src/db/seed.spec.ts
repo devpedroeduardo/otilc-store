@@ -11,12 +11,14 @@ describe('assertLocalDatabaseUrl', () => {
 
   it('recusa banco remoto sem executar nada', () => {
     expect(() =>
-      assertLocalDatabaseUrl('postgres://user:senha-secreta@db.producao.example.com:5432/otilc'),
+      assertLocalDatabaseUrl(
+        'postgres://usuario:teste-ficticio@db.producao.example.com:5432/otilc',
+      ),
     ).toThrow(/não é local/i);
   });
 
   it('não vaza usuário nem senha na mensagem de erro', () => {
-    const url = 'postgres://user:senha-secreta@db.producao.example.com:5432/otilc';
+    const url = 'postgres://usuario:teste-ficticio@db.producao.example.com:5432/otilc';
     let message = '';
     try {
       assertLocalDatabaseUrl(url);
@@ -24,8 +26,8 @@ describe('assertLocalDatabaseUrl', () => {
       message = (err as Error).message;
     }
     expect(message).toMatch(/não é local/i);
-    expect(message).not.toContain('senha-secreta');
-    expect(message).not.toContain('user');
+    expect(message).not.toContain('teste-ficticio');
+    expect(message).not.toContain('usuario');
   });
 
   it('recusa URL sem host', () => {

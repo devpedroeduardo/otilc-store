@@ -1,19 +1,19 @@
 import { newAdminSchema } from './new-admin';
 
 const valid = {
-  email: '  Dono@OTILC.com.br ',
+  email: '  Dono@Example.test ',
   name: ' Dono ',
   role: 'owner',
-  password: 'uma-senha-bem-longa',
+  password: 'teste-nao-e-uma-senha-real',
 };
 
 describe('newAdminSchema (script admin:create)', () => {
   it('normaliza e-mail, nome e papel', () => {
     expect(newAdminSchema.parse(valid)).toEqual({
-      email: 'dono@otilc.com.br',
+      email: 'dono@example.test',
       name: 'Dono',
       role: 'OWNER',
-      password: 'uma-senha-bem-longa',
+      password: 'teste-nao-e-uma-senha-real',
     });
   });
 
