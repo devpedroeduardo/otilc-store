@@ -358,10 +358,92 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await orderStatus(broken.orderId)).toBe('PENDING_PAYMENT');
       expect(warnings().some((w) => w.includes(broken.paymentId))).toBe(true);
 
+      // Sem ajuste manual: a falha devolveu o last_checked_at anterior.
       mp.getSpy.mockImplementation(real);
-      await checkedAgo(broken.orderId, 30);
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
       expect(await orderStatus(broken.orderId)).toBe('PAID');
+    });
+
+    it('erro do MP num APPROVED: a rodada seguinte tenta de novo (não espera 6 h)', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      approve(paymentId);
+      await reconciliation.reconcile();
+      expect(await orderStatus(orderId)).toBe('PAID');
+      await checkedAgo(orderId, 7 * 3600);
+      const before = (await paymentOf(orderId)).lastCheckedAt;
+      setRemote(paymentId, { status: 'charged_back' });
+      mp.getSpy.mockRejectedValueOnce(new PixProviderError('Mercado Pago indisponível (rede).'));
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      expect((await paymentOf(orderId)).lastCheckedAt).toEqual(before);
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      // Agora conferido: só volta daqui a 6 h.
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+    });
+
+    it('falha não devolve o last_checked_at se outra consulta conferiu o pagamento no meio', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      const newer = new Date(Date.now() + 60_000);
+      mp.getSpy.mockImplementationOnce(async () => {
+        await ctx.db
+          .update(payments)
+          .set({ lastCheckedAt: newer })
+          .where(eq(payments.orderId, orderId));
+        throw new PixProviderError('Mercado Pago respondeu 500.');
+      });
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
+      expect((await paymentOf(orderId)).lastCheckedAt).toEqual(newer);
+    });
+  });
+
+  describe('status nunca regride', () => {
+    it('cancelled ou rejected atrasado sobre APPROVED ou REFUNDED não muda nada', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      const approvedOrder = await orderWithPix(v.id);
+      const refundedOrder = await orderWithPix(v.id);
+      for (const o of [approvedOrder, refundedOrder]) approve(o.paymentId);
+      await reconciliation.reconcile();
+      setRemote(refundedOrder.paymentId, { status: 'refunded' });
+      await webhook(refundedOrder.paymentId).expect(200);
+      const approvedRow = await paymentOf(approvedOrder.orderId);
+      const refundedRow = await paymentOf(refundedOrder.orderId);
+      expect(refundedRow.status).toBe('REFUNDED');
+
+      for (const late of ['cancelled', 'rejected']) {
+        setRemote(approvedOrder.paymentId, { status: late });
+        setRemote(refundedOrder.paymentId, { status: late });
+        await webhook(approvedOrder.paymentId).expect(200);
+        await webhook(refundedOrder.paymentId).expect(200);
+      }
+
+      expect(await paymentOf(approvedOrder.orderId)).toEqual(approvedRow);
+      expect(await paymentOf(refundedOrder.orderId)).toEqual(refundedRow);
+      expect(await orderStatus(approvedOrder.orderId)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+    });
+
+    it('PENDING que o MP já mostra refunded vira REFUNDED, sem alerta, com warn', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, { status: 'refunded' });
+
+      await reconciliation.reconcile();
+
+      expect(await paymentOf(orderId)).toMatchObject({ status: 'REFUNDED', alert: null });
+      expect(await alertsOf(orderId)).toEqual([]);
+      expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+      expect(warnings()).toContainEqual(
+        expect.stringMatching(/estornado antes de ser visto aprovado/),
+      );
+      const logged = warnings().find((w) => w.includes('estornado antes'))!;
+      expect(logged).toContain(paymentId);
+      expect(logged).toContain(orderId);
     });
   });
 
@@ -562,10 +644,10 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
   });
 
   describe('limite de requisições', () => {
-    it('webhook aceita 130 requisições seguidas do mesmo IP; outra rota continua em 120/min', async () => {
+    it('webhook aceita 600 requisições por minuto do mesmo IP (a 601ª é 429); outra rota continua em 120/min', async () => {
       const ip = nextIp();
       const statuses: number[] = [];
-      for (let i = 0; i < 130; i++) {
+      for (let i = 0; i < 600; i++) {
         const res = await http()
           .post('/api/webhooks/mercadopago?data.id=1&type=payment')
           .set('X-Forwarded-For', ip)
@@ -574,6 +656,11 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       }
       expect(statuses.filter((s) => s === 429)).toEqual([]);
       expect(new Set(statuses)).toEqual(new Set([401]));
+      await http()
+        .post('/api/webhooks/mercadopago?data.id=1&type=payment')
+        .set('X-Forwarded-For', ip)
+        .send({ type: 'payment', data: { id: '1' } })
+        .expect(429);
 
       const other = nextIp();
       const missing = '00000000-0000-4000-8000-000000000000';

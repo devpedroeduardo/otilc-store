@@ -132,10 +132,10 @@ Efeito da transição, pelo status vindo da consulta ao Mercado Pago:
 | `approved` com valor, moeda ou referência divergente                                                                       | não muda                 | não muda                          | alerta `AMOUNT_MISMATCH`                                |
 | `approved` com pedido já `PAID` ou `SHIPPED` por outro caminho                                                             | não muda                 | não muda                          | alerta `DUPLICATE_PAYMENT`                              |
 | cobrança já `APPROVED` e `refunded`, `charged_back` ou `in_mediation` (estorno ou contestação)                             | não muda                 | não muda                          | alerta `PAYMENT_REVERSED`; `refunded` vira `REFUNDED`   |
-| `rejected`, `cancelled`, `refunded` (cobrança ainda não aprovada)                                                          | não muda                 | não muda                          | status atualizado                                       |
+| `rejected`, `cancelled`, `refunded` com a cobrança ainda `PENDING`                                                         | não muda                 | não muda                          | status atualizado                                       |
 | status desconhecido                                                                                                        | não muda                 | não muda                          | não muda (só log)                                       |
 
-Mapeamento: `pending`, `in_process` e `authorized` → `PENDING`; `approved` → `APPROVED`; `rejected` → `REJECTED`; `cancelled` → `CANCELLED`; `refunded` → `REFUNDED`; qualquer outro é desconhecido, menos `charged_back` e `in_mediation` numa cobrança já `APPROVED` (estorno ou contestação, acima). Uma cobrança nunca volta para `PENDING`.
+Mapeamento: `pending`, `in_process` e `authorized` → `PENDING`; `approved` → `APPROVED`; `rejected` → `REJECTED`; `cancelled` → `CANCELLED`; `refunded` → `REFUNDED`; qualquer outro é desconhecido, menos `charged_back` e `in_mediation` numa cobrança já `APPROVED` (estorno ou contestação, acima). Uma cobrança nunca volta para `PENDING`, e só uma `PENDING` vira `REJECTED`, `CANCELLED` ou `REFUNDED` por esta linha: uma resposta atrasada (`cancelled` do cancelamento, por exemplo) não faz uma `APPROVED` ou `REFUNDED` regredir, e uma `APPROVED` só vira `REFUNDED` pelo estorno. Uma `PENDING` que o Mercado Pago já mostra `refunded` (aprovada e estornada entre duas consultas) vira `REFUNDED` sem alerta, porque o pedido nunca foi pago, e gera aviso no log com o id do pagamento e do pedido.
 
 **Momento da aprovação**: `date_approved` do Mercado Pago; se vier vazio, `date_last_updated`; sem os dois, a hora da consulta. Os dois últimos casos geram aviso no log com o id do pagamento, porque essa data decide se o pagamento entrou no prazo do pedido.
 
@@ -168,7 +168,7 @@ A API confere sozinha os pagamentos com o Mercado Pago, para corrigir o que o we
   - nunca um pagamento conferido há menos de 20 segundos (pela verificação sob demanda ou por outra rodada).
 - **Várias instâncias**: a rodada reivindica os pagamentos num único comando (`FOR UPDATE SKIP LOCKED` e `last_checked_at = now()`). Uma instância pula o que outra está reivindicando e, depois do commit, o descarta pela regra dos 20 segundos. Duas rodadas simultâneas nunca consultam o mesmo pagamento.
 - **Sem trava aberta**: a consulta ao Mercado Pago só acontece depois de a reivindicação terminar; a mudança de estado é a mesma transição do webhook (tabela acima).
-- **Falha** (erro, tempo esgotado ou pagamento não encontrado no Mercado Pago): aviso no log com o id do pagamento, e a rodada segue para o próximo. A rodada seguinte tenta de novo.
+- **Falha** (erro, tempo esgotado ou pagamento não encontrado no Mercado Pago): aviso no log com o id do pagamento, e a rodada segue para o próximo. O `last_checked_at` volta ao valor de antes da reivindicação (se ninguém conferiu o pagamento no meio), então a rodada seguinte tenta de novo, inclusive para `APPROVED`, sem esperar as 6 horas.
 
 ## Cancelamento do Pix quando o pedido expira
 
