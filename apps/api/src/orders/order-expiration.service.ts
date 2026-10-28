@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ENV, type Env } from '../config/env';
 import { PaymentReconciliationService } from '../payments/payment-reconciliation.service';
+import { skipIfRunning } from '../payments/skip-if-running';
 import { OrdersService } from './orders.service';
 
 /**
@@ -20,9 +21,12 @@ export class OrderExpirationService implements OnModuleInit, OnApplicationShutdo
 
   onModuleInit(): void {
     if (this.env.NODE_ENV === 'test') return;
-    this.timer = setInterval(() => {
-      this.run().catch((err) => this.logger.error(err));
-    }, 60_000);
+    // Cancelamentos lentos no Mercado Pago não sobrepõem uma rodada à seguinte nesta instância.
+    const tick = skipIfRunning(
+      () => this.run(),
+      (err) => this.logger.error(err),
+    );
+    this.timer = setInterval(() => void tick(), 60_000);
     this.timer.unref();
   }
 
