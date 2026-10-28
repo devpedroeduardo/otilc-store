@@ -428,6 +428,35 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
     });
 
+    it('approved atrasado sobre REFUNDED não aprova de novo nem paga o pedido', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      // Estornada antes de ser vista aprovada (pedido nunca pago) e estornada depois de paga.
+      const neverPaid = await orderWithPix(v.id);
+      setRemote(neverPaid.paymentId, { status: 'refunded' });
+      const paid = await orderWithPix(v.id);
+      approve(paid.paymentId);
+      await reconciliation.reconcile();
+      setRemote(paid.paymentId, { status: 'refunded' });
+      await webhook(paid.paymentId).expect(200);
+      const rows = [await paymentOf(neverPaid.orderId), await paymentOf(paid.orderId)];
+      expect(rows.map((r) => r.status)).toEqual(['REFUNDED', 'REFUNDED']);
+
+      // Resposta atrasada do MP (webhook fora de ordem): approved de novo.
+      for (const o of [neverPaid, paid]) {
+        approve(o.paymentId);
+        await webhook(o.paymentId).expect(200);
+      }
+
+      expect(await paymentOf(neverPaid.orderId)).toEqual(rows[0]);
+      expect(await paymentOf(paid.orderId)).toEqual(rows[1]);
+      expect(await orderStatus(neverPaid.orderId)).toBe('PENDING_PAYMENT');
+      expect(await orderStatus(paid.orderId)).toBe('PAID');
+      expect(await alertsOf(neverPaid.orderId)).toEqual([]);
+      expect(await alertsOf(paid.orderId)).toEqual(['PAYMENT_REVERSED']);
+      // Uma unidade vendida (paid) e uma ainda reservada (neverPaid, que segue a própria expiração).
+      expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+    });
+
     it('PENDING que o MP já mostra refunded vira REFUNDED, sem alerta, com warn', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);

@@ -166,6 +166,8 @@ export class PaymentTransitionService {
         return 'updated';
       }
       if (payment.status === 'APPROVED') return 'already_approved';
+      // Estornada é estado final: um `approved` atrasado não volta a aprovar nem paga o pedido.
+      if (payment.status === 'REFUNDED') return 'updated';
 
       const approvedAt = this.approvedAt(remote);
       const matches =
