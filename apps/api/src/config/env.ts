@@ -11,6 +11,15 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3333),
     DATABASE_URL: z.string().url(),
+    // Certificado raiz público do Supabase (PEM), para o SSL verificado do banco (spec-016).
+    // Obrigatório em produção; o uso fica em db/client.ts, que o migrator também usa.
+    DATABASE_CA_CERT: z.preprocess(
+      blankAsMissing,
+      z
+        .string()
+        .refine((pem) => pem.includes('-----BEGIN CERTIFICATE-----'), 'Precisa ser um PEM.')
+        .optional(),
+    ),
     WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
     ORDER_HOLD_MINUTES: z.coerce
       .number()
@@ -43,7 +52,26 @@ const envSchema = z
       if (!env[key])
         ctx.addIssue({ code: 'custom', path: [key], message: 'Obrigatória em produção.' });
     }
+    if (!env.DATABASE_CA_CERT)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DATABASE_CA_CERT'],
+        message: 'Obrigatória em produção.',
+      });
+    // O padrão (http://localhost:3000) não serve em produção. CORS e a checagem de Origin do admin
+    // comparam a origem exata: nada de caminho nem barra no fim.
+    if (!isHttpsOrigin(env.WEB_ORIGIN))
+      ctx.addIssue({
+        code: 'custom',
+        path: ['WEB_ORIGIN'],
+        message: 'Obrigatória em produção: só a origem da loja, com https e sem barra no fim.',
+      });
   });
+
+function isHttpsOrigin(value: string): boolean {
+  const url = new URL(value);
+  return url.protocol === 'https:' && url.origin === value;
+}
 
 export type Env = z.infer<typeof envSchema>;
 

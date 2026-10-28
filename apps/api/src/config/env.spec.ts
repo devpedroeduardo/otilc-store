@@ -8,6 +8,15 @@ const pix = {
   MP_WEBHOOK_SECRET: randomBytes(32).toString('hex'),
   MP_NOTIFICATION_URL: 'https://api.example.test/api/webhooks/mercadopago',
 };
+// O restante que a produção exige (spec-016). Certificado fictício, só com o formato PEM.
+const CA_PEM = `-----BEGIN CERTIFICATE-----\n${randomBytes(48).toString('base64')}\n-----END CERTIFICATE-----\n`;
+const prod = {
+  DATABASE_URL,
+  NODE_ENV: 'production',
+  ...pix,
+  WEB_ORIGIN: 'https://loja.example.test',
+  DATABASE_CA_CERT: CA_PEM,
+};
 
 describe('loadEnv', () => {
   it('aplica valores padrão', () => {
@@ -52,12 +61,53 @@ describe('loadEnv', () => {
     expect(() => loadEnv({ DATABASE_URL, NODE_ENV: 'production' })).toThrow(
       /MP_ACCESS_TOKEN.*MP_WEBHOOK_SECRET.*MP_NOTIFICATION_URL/,
     );
-    expect(() =>
-      loadEnv({ DATABASE_URL, NODE_ENV: 'production', ...pix, MP_WEBHOOK_SECRET: '' }),
-    ).toThrow(/MP_WEBHOOK_SECRET/);
-    expect(loadEnv({ DATABASE_URL, NODE_ENV: 'production', ...pix }).MP_ACCESS_TOKEN).toBe(
-      pix.MP_ACCESS_TOKEN,
+    expect(() => loadEnv({ ...prod, MP_WEBHOOK_SECRET: '' })).toThrow(/MP_WEBHOOK_SECRET/);
+    expect(loadEnv(prod).MP_ACCESS_TOKEN).toBe(pix.MP_ACCESS_TOKEN);
+  });
+
+  it('em produção, não sobe sem DATABASE_CA_CERT', () => {
+    expect(() => loadEnv({ ...prod, DATABASE_CA_CERT: undefined })).toThrow(
+      /DATABASE_CA_CERT: Obrigatória em produção/,
     );
+    expect(() => loadEnv({ ...prod, DATABASE_CA_CERT: '' })).toThrow(/DATABASE_CA_CERT/);
+    expect(loadEnv(prod).DATABASE_CA_CERT).toBe(CA_PEM);
+  });
+
+  it('DATABASE_CA_CERT precisa ser PEM e é opcional fora de produção', () => {
+    expect(() => loadEnv({ DATABASE_URL, DATABASE_CA_CERT: 'nao-e-pem' })).toThrow(
+      /DATABASE_CA_CERT: Precisa ser um PEM/,
+    );
+    expect(loadEnv({ DATABASE_URL }).DATABASE_CA_CERT).toBeUndefined();
+  });
+
+  it('em produção, WEB_ORIGIN é obrigatória: só a origem, com https', () => {
+    // Sem a variável vale o padrão http://localhost:3000, que não serve em produção.
+    expect(() => loadEnv({ ...prod, WEB_ORIGIN: undefined })).toThrow(/WEB_ORIGIN/);
+    for (const bad of [
+      'http://loja.example.test',
+      'https://loja.example.test/',
+      'https://loja.example.test/admin',
+    ]) {
+      expect(() => loadEnv({ ...prod, WEB_ORIGIN: bad })).toThrow(/WEB_ORIGIN/);
+    }
+    expect(loadEnv(prod).WEB_ORIGIN).toBe('https://loja.example.test');
+    // Fora de produção, o padrão local continua valendo.
+    expect(loadEnv({ DATABASE_URL }).WEB_ORIGIN).toBe('http://localhost:3000');
+  });
+
+  it('em produção, o erro de configuração nunca traz valores', () => {
+    const origin = 'http://origem-ficticia.example.test';
+    try {
+      loadEnv({ ...prod, WEB_ORIGIN: origin, DATABASE_CA_CERT: '' });
+      throw new Error('deveria falhar');
+    } catch (err) {
+      const message = (err as Error).message;
+      expect(message).toMatch(/WEB_ORIGIN/);
+      expect(message).toMatch(/DATABASE_CA_CERT/);
+      for (const value of [origin, DATABASE_URL, ...Object.values(pix)]) {
+        expect(message).not.toContain(value);
+      }
+    }
   });
 
   it('URL de notificação precisa ser https', () => {
