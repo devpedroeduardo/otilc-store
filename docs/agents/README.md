@@ -81,6 +81,30 @@ As divergências entre API e web que aparecerem aqui medem se o contrato funcion
 
 Preencha `docs/agents/scorecard.md`. Ajuste o `AGENTS.md` com o que aprendeu.
 
+## Pipeline de uma spec
+
+Formação e roteamento em [`routing.md`](routing.md); papéis em [`roles/`](roles/README.md).
+
+1. Pedido (Pedro → Bússola)
+2. Reconhecimento: Bússola pede fatos à Formiga (nunca lê código)
+3. Spec + nota no fichário (Bússola)
+4. Build em worktree própria (Forja ou Faísca, por roteamento)
+5. PR aberto (autor) → avisa Bússola e Formiga
+6. CI: Formiga vigia e manda resumo de até 5 linhas à Bússola ([cicd](roles/cicd.md))
+7. Revisão cruzada (o outro dev, só leitura, com [revisor](roles/revisor.md))
+8. Correções (autor; máx. 2 rodadas, depois escala ao Pedro)
+9. Pronto para merge → Bússola avisa o Pedro (status 🟠)
+10. Merge (Pedro) → deploy automático → Formiga faz smoke test
+11. Fechamento: scorecard + nota 🟢 (Bússola)
+
+Notas no fichário "Fluxo OTILC" (a Bússola é a dona):
+
+- Uma nota "spec-NNN <título>" por spec, copiada da nota "MODELO spec".
+- Cabeçalho `Responsável | Revisor | PR` e uma linha de Status.
+- Checklist: spec, worktree, implementado, testes locais, PR, CI, revisão cruzada, ressalvas, merge, produção, scorecard.
+- Log com linhas `AAAA-MM-DD HH:MM · agente · evento`.
+- Status: 🟡 em andamento · 🔵 em revisão · 🟠 aguardando Pedro · 🔴 bloqueado · 🟢 concluído.
+
 ## Regras de ouro
 
 - Agente nunca faz merge. Você sempre lê o diff inteiro.
