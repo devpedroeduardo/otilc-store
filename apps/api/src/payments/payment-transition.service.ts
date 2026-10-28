@@ -149,13 +149,20 @@ export class PaymentTransitionService {
       }
 
       if (status !== 'APPROVED') {
-        // Nunca volta para PENDING: isso poderia colidir com uma tentativa nova do mesmo pedido.
-        if (status !== payment.status && status !== 'PENDING') {
-          await tx
-            .update(payments)
-            .set({ status, updatedAt: new Date() })
-            .where(eq(payments.id, payment.id));
+        // Só uma cobrança PENDING encerra por aqui. Nunca volta para PENDING (colidiria com uma
+        // tentativa nova do mesmo pedido), e APPROVED ou REFUNDED não regridem com uma resposta
+        // atrasada (ex.: `cancelled` do PUT); APPROVED só vira REFUNDED pelo estorno, acima.
+        if (payment.status !== 'PENDING' || status === 'PENDING') return 'updated';
+        if (status === 'REFUNDED') {
+          // Aprovado e estornado entre duas consultas: o pedido nunca foi pago, sem alerta.
+          this.logger.warn(
+            `Pagamento ${providerPaymentId} do pedido ${order.id} estornado antes de ser visto aprovado.`,
+          );
         }
+        await tx
+          .update(payments)
+          .set({ status, updatedAt: new Date() })
+          .where(eq(payments.id, payment.id));
         return 'updated';
       }
       if (payment.status === 'APPROVED') return 'already_approved';
