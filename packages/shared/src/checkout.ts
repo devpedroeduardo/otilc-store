@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { integer } from './zod-compat';
 
 /** Item do carrinho enviado pela loja. O preço NUNCA vem do navegador: a API calcula. */
 export const cartItemSchema = z.object({
   variantId: z.string().min(1).max(64),
-  quantity: z.number().int().min(1).max(10),
+  quantity: z.number().check(integer).min(1).max(10),
 });
 
 export const checkoutSchema = z.object({

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { integer } from './zod-compat';
 
 /** Condição de peças seminovas, de 0 a 10 (aceita uma casa decimal, ex.: 7,5). Peças novas não têm condição (null). */
 export const conditionSchema = z.number().min(0).max(10).multipleOf(0.1).nullable();
@@ -17,8 +18,8 @@ export const catalogQuerySchema = z.object({
     .max(40)
     .optional(),
   ordem: catalogSortSchema.default('destaque'),
-  pagina: z.coerce.number().int().min(1).max(500).default(1),
-  porPagina: z.coerce.number().int().min(1).max(48).default(24),
+  pagina: z.coerce.number().check(integer).min(1).max(500).default(1),
+  porPagina: z.coerce.number().check(integer).min(1).max(48).default(24),
 });
 export type CatalogQuery = z.infer<typeof catalogQuerySchema>;
 
