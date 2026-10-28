@@ -6,8 +6,8 @@ O `CLAUDE.md` só importa este arquivo. Não duplique regras em outro lugar.
 ## O projeto
 
 Loja virtual própria da OTILC, marca de streetwear ("OTILC — Veja Além").
-Já funciona: catálogo com filtros, carrinho, criação de pedido com reserva de estoque à prova de concorrência e expiração de reservas.
-Próximos passos (ver `specs/` e o Roadmap do `README.md`): login de administrador, painel administrativo, Pix, e-mail e deploy.
+Já funciona: catálogo com filtros, carrinho, criação de pedido com reserva de estoque à prova de concorrência e expiração de reservas, login de administrador, painel administrativo e testes E2E no navegador.
+Próximos passos (ver `specs/` e o Roadmap do `README.md`): Pix, e-mail e deploy.
 
 Leia o `README.md` (seção "Destaques técnicos") antes de mexer em pedidos ou estoque: as garantias descritas lá não podem regredir.
 
