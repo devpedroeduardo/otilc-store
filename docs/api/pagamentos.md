@@ -76,7 +76,7 @@ Sem corpo. Chamado pela página do pedido logo depois do checkout.
 - Pedido inexistente: `404`.
 - Pedido que não está `PENDING_PAYMENT`, ou com `expiresAt` vencido: `409 ORDER_NOT_PAYABLE`.
 - Já existe cobrança `PENDING` para o pedido: `200` com ela, **sem** chamar o Mercado Pago.
-- Senão, cria o pagamento Pix no Mercado Pago e grava a cobrança: `201`. Se a cobrança anterior terminou `REJECTED` ou `CANCELLED` e o pedido ainda pode ser pago, é criada uma nova tentativa.
+- Senão, cria o pagamento Pix no Mercado Pago e grava a cobrança: `201`. O Pix vale **31 minutos a partir da criação** (`date_of_expiration`): o Mercado Pago exige no mínimo 30 minutos, mais 1 de folga, e a reserva do pedido é menor que isso. O prazo para pagar continua sendo o `expiresAt` do pedido; um pagamento aprovado depois dele não paga o pedido e gera o alerta `PAID_AFTER_EXPIRY` (decisão do Pedro, Q13). Se a cobrança anterior terminou `REJECTED` ou `CANCELLED` e o pedido ainda pode ser pago, é criada uma nova tentativa.
 - Pix desligado, Mercado Pago fora do ar, tempo esgotado ou resposta fora do formato esperado: `503 PIX_UNAVAILABLE`. O pedido e a reserva não mudam.
 
 Garantias: no máximo **uma** cobrança `PENDING` por pedido (índice único parcial no banco). Duas chamadas simultâneas terminam com uma cobrança só, e as duas respostas trazem a mesma cobrança. A chave de idempotência enviada ao Mercado Pago (`X-Idempotency-Key`) é determinística por pedido e tentativa.
@@ -116,9 +116,9 @@ x-request-id: bb56a2f1-6aae-46ac-982e-9dcd3581d08e
 Processamento, nesta ordem:
 
 1. **Query** validada (`mercadoPagoWebhookQuerySchema`): `data.id` alfanumérico, até 64 caracteres. Inválida: `400`.
-2. **Assinatura**: o header `x-signature` traz `ts` e `v1`. A API calcula HMAC-SHA256 com `MP_WEBHOOK_SECRET` sobre o texto `id:<data.id>;request-id:<x-request-id>;ts:<ts>;` (`data.id` da query, em minúsculas se alfanumérico) e compara com `v1` usando `timingSafeEqual`, conferindo o tamanho antes. O `ts` precisa estar a no máximo **5 minutos** do relógio do servidor. Header ausente, malformado, assinatura diferente ou `ts` fora da janela: `401`, nada é gravado.
+2. **Assinatura**: o header `x-signature` traz `ts` e `v1`. A API calcula HMAC-SHA256 com `MP_WEBHOOK_SECRET` sobre o texto `id:<data.id>;request-id:<x-request-id>;ts:<ts>;` (`data.id` da query como recebido; para id alfanumérico também vale a forma em minúsculas, que a documentação antiga pedia. Ids de pagamento são numéricos) e compara com `v1` usando `timingSafeEqual`, conferindo o tamanho antes. O `ts` é em segundos (horário Unix) e precisa estar a no máximo **5 minutos** do relógio do servidor. Header ausente, repetido ou malformado, `x-request-id` ausente, assinatura diferente ou `ts` fora da janela: `401`, nada é gravado. Fonte do texto assinado e da unidade do `ts`: SDK oficial `mercadopago/sdk-nodejs` (`src/utils/webhook`), já que a página de webhooks não traz o algoritmo manual. Com o Pix desligado (variáveis ausentes), o webhook responde `503`.
 3. **Corpo** validado (`mercadoPagoWebhookBodySchema`): só `type` e `data.id` são lidos; todo o resto, inclusive qualquer status, é descartado. Inválido, ou `data.id` do corpo diferente do da query: `400`.
-4. `type` diferente de `payment`: `200`, ignorada.
+4. `type` diferente de `payment`: `200`, ignorada. Pagamento que não é de nenhuma cobrança da loja: `200`, registrado e ignorado.
 5. `x-request-id` já registrado em `payment_notifications`: `200`, sem reprocessar.
 6. Consulta o pagamento no Mercado Pago (fora da transação) e, numa transação, aplica a transição e registra o `x-request-id`. Se a consulta ou a transação falhar: `500`, nada é registrado, e o reenvio do Mercado Pago é processado normalmente.
 
@@ -128,8 +128,11 @@ Efeito da transição, pelo status vindo da consulta ao Mercado Pago:
 | -------------------------------------------------------------------------------------------------------------------------- | ------------------------ | --------------------------------- | ------------------------------------------------------- |
 | `approved`, referência = pedido, valor = `totalCents`, moeda `BRL`, pedido `PENDING_PAYMENT`, `date_approved <= expiresAt` | vira `PAID` (uma vez só) | `reserved -= qtd`, `stock -= qtd` | `APPROVED`                                              |
 | `approved` com pedido já `EXPIRED` ou `CANCELED`                                                                           | não muda                 | não muda                          | `APPROVED`, alerta `PAID_AFTER_EXPIRY` (estorno manual) |
+| `approved`, pedido ainda `PENDING_PAYMENT`, `date_approved > expiresAt`                                                    | não muda                 | não muda                          | `APPROVED`, alerta `PAID_AFTER_EXPIRY` (estorno manual) |
 | `approved` com valor, moeda ou referência divergente                                                                       | não muda                 | não muda                          | alerta `AMOUNT_MISMATCH`                                |
-| `pending`, `rejected`, `cancelled`, `refunded` etc.                                                                        | não muda                 | não muda                          | status atualizado                                       |
+| `rejected`, `cancelled`, `refunded`                                                                                        | não muda                 | não muda                          | status atualizado                                       |
 | status desconhecido                                                                                                        | não muda                 | não muda                          | não muda (só log)                                       |
+
+Mapeamento: `pending`, `in_process` e `authorized` → `PENDING`; `approved` → `APPROVED`; `rejected` → `REJECTED`; `cancelled` → `CANCELLED`; `refunded` → `REFUNDED`; qualquer outro (`charged_back`, `in_mediation`...) é desconhecido. Uma cobrança nunca volta para `PENDING`.
 
 Reprocessar um pagamento já aprovado não faz nada. A transação trava o pedido e depois as variações, na mesma ordem do job de expiração e do painel, então webhook e expiração simultâneos terminam com o pedido `PAID` ou `EXPIRED`, nunca os dois. Os alertas ficam só no banco nesta versão.
