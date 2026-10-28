@@ -14,11 +14,13 @@ Cada linha se apoia em evidência do `scorecard.md`, não em impressão. Reavali
 | Forja   | Dev Principal                       | Opus 5.5 (Claude Code) | back-end, banco/migrations, segurança, infra (workflows, config de deploy) |
 | Faísca  | Dev Secundária                      | Opus 5.5 (Claude Code) | front-end, documentação, módulos paralelos                                 |
 | Formiga | Operadora de CI/CD e Reconhecimento | Gemini 3.8 Flash       | vigiar CI, triagem de logs, re-run, smoke test, levantar fatos do repo     |
+| Lente   | Revisora                            | Codex (OpenAI)         | revisão de todo PR, em sandbox só leitura ([revisor](roles/revisor.md))    |
 
 Roteamento:
 
-- back-end, banco, segurança, infra → Forja executa, Faísca revisa
-- front-end, docs → Faísca executa, Forja revisa
+- back-end, banco, segurança, infra → Forja executa
+- front-end, docs → Faísca executa
+- revisão de todo PR → Lente (outro fornecedor, só leitura); em segurança, banco e pagamento, segunda revisão pelo outro dev (Faísca nos PRs da Forja, Forja nos da Faísca)
 - CI, logs, smoke test, fatos do repo → Formiga ([cicd](roles/cicd.md))
 - trabalho paralelo → contrato primeiro, depois fronteira de arquivos por dev
 
@@ -26,13 +28,13 @@ Roteamento:
 
 As evidências até a spec-009 vêm da formação anterior (Claude Code, Codex e OpenCode). Forja e Faísca rodam no Claude Code, por isso herdam a evidência do Claude onde o papel é o mesmo.
 
-| Papel       | Executor principal                        | Alternativa | Revisor                            | Confiança | Evidência                                                                                                                                                                          |
-| ----------- | ----------------------------------------- | ----------- | ---------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `backend`   | Forja                                     | Faísca      | Faísca (com papel `revisor`)       | média     | 001, 002, 005 e 007 (Claude) entregues dentro do escopo. A revisão melhorou muito quando o revisor passou a usar `revisor.md` (005).                                               |
-| `frontend`  | Faísca                                    | Forja       | Forja + CI                         | baixa     | 003 (Codex) rápida, mas com 4 bloqueadores achados na revisão. 006 (Claude) com testes fortes, mas reprovou no Semgrep, e a revisão do Codex não pegou.                            |
-| `seguranca` | Forja                                     | Faísca      | Faísca                             | baixa     | 010 (Forja) entregue no escopo, 0 bloqueadores. Antes: 004 e 009 com OpenCode, que perguntou antes de agir quando o critério era ambíguo (009).                                    |
-| `revisor`   | o dev que não é o autor (Forja ou Faísca) | —           | humano lê o diff inteiro           | média     | Claude achou problemas reais em #9 (4 bloqueadores) e #14 (3 itens, um que o humano não viu). Faísca revisou #18 (2 ressalvas). Codex conferia escopo, mas achava pouco de design. |
-| `cicd`      | Formiga                                   | —           | Bússola (recebe o resumo e decide) | baixa     | Papel novo (spec-012). Reconhecimento de `docs/agents` entregue na spec-012; ainda sem spec no scorecard.                                                                          |
+| Papel       | Executor principal | Alternativa                               | Revisor                            | Confiança | Evidência                                                                                                                                                                          |
+| ----------- | ------------------ | ----------------------------------------- | ---------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend`   | Forja              | Faísca                                    | Lente + Faísca (banco)             | média     | 001, 002, 005 e 007 (Claude) entregues dentro do escopo. A revisão melhorou muito quando o revisor passou a usar `revisor.md` (005).                                               |
+| `frontend`  | Faísca             | Forja                                     | Lente + CI                         | baixa     | 003 (Codex) rápida, mas com 4 bloqueadores achados na revisão. 006 (Claude) com testes fortes, mas reprovou no Semgrep, e a revisão do Codex não pegou.                            |
+| `seguranca` | Forja              | Faísca                                    | Lente + Faísca                     | baixa     | 010 (Forja) entregue no escopo, 0 bloqueadores. Antes: 004 e 009 com OpenCode, que perguntou antes de agir quando o critério era ambíguo (009).                                    |
+| `revisor`   | Lente              | o dev que não é o autor (Forja ou Faísca) | humano lê o diff inteiro           | média     | Claude achou problemas reais em #9 (4 bloqueadores) e #14 (3 itens, um que o humano não viu). Faísca revisou #18 (2 ressalvas). Codex conferia escopo, mas achava pouco de design. |
+| `cicd`      | Formiga            | —                                         | Bússola (recebe o resumo e decide) | baixa     | Papel novo (spec-012). Reconhecimento de `docs/agents` entregue na spec-012; ainda sem spec no scorecard.                                                                          |
 
 Confiança:
 
@@ -42,7 +44,7 @@ Confiança:
 
 ## Regras fixas
 
-1. **O revisor nunca é o autor, e de preferência é de outro fornecedor.** Mesmo modelo revisando a si mesmo repete os mesmos pontos cegos. Desde 2026-10-28 Forja e Faísca são do mesmo fornecedor (Opus 5.5), então a revisão cruzada entre elas compensa assim: o revisor segue `roles/revisor.md` em modo só leitura e começa listando 3 formas de o PR quebrar em produção, e o Pedro lê o diff inteiro em mudanças de segurança, banco e pagamento.
+1. **O revisor nunca é o autor, e de preferência é de outro fornecedor.** Mesmo modelo revisando a si mesmo repete os mesmos pontos cegos. Forja e Faísca são do mesmo fornecedor (Opus 5.5), por isso desde 2026-10-28 a Lente (Codex) revisa todo PR. Em segurança, banco e pagamento há segunda revisão pelo outro dev, também com `roles/revisor.md` em modo só leitura, começando por 3 formas de o PR quebrar em produção, e o Pedro lê o diff inteiro.
 2. **O CI é a rede de segurança**, não o revisor. O Semgrep pegou na 006 o que a revisão do agente deixou passar. Nenhum PR entra sem todos os checks verdes (testes, Semgrep, gitleaks).
 3. **O revisor roda sem poder de escrita:** `claude --permission-mode plan` ou `codex --sandbox read-only`.
 4. **O revisor recebe a descrição do PR** salva em arquivo (`gh pr view NN > /tmp/pr-NN.md`), porque no modo só leitura ele não chama o `gh`.
