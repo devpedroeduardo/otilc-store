@@ -20,6 +20,10 @@ test('integer: não interrompe as checagens seguintes', () => {
     'Expected integer, received float',
     'Number must be less than or equal to 10',
   ]);
+  assert.deepEqual(messages(z.number().check(integer).min(0), -1.5), [
+    'Expected integer, received float',
+    'Number must be greater than or equal to 0',
+  ]);
 });
 
 test('mensagens do Zod 3: limites exclusivos e exatos', () => {
