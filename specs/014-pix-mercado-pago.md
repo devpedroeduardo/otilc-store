@@ -102,6 +102,7 @@ Faísca:
 - `apps/web/src/components/checkout.tsx`, `apps/web/src/components/pedido-pix.tsx` (novo)
 - `apps/web/src/lib/api.ts`
 - `e2e/compra.spec.ts`
+- `e2e/pedido-pix.spec.ts` (novo)
 
 Qualquer outro caminho: pare e fale com a Bússola.
 
@@ -146,6 +147,7 @@ Web:
 - [ ] Depois do checkout, o cliente vai para `/pedido/[id]`, que mostra QR, copia e cola, total e contagem regressiva
 - [ ] A página para de consultar em estado final e mostra "Pagamento confirmado" quando o pedido vira `PAID`
 - [ ] Sem credenciais, a página mostra "Pix indisponível"; `npm run test:e2e:web` verde
+- [ ] A contagem regressiva segue o expiresAt do pedido; ao zerar, a página para de consultar, esconde QR e copia e cola e mostra "Pedido expirado" (e2e/pedido-pix.spec.ts)
 
 Geral:
 
