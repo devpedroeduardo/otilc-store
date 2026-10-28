@@ -130,6 +130,7 @@ Efeito da transição, pelo status vindo da consulta ao Mercado Pago:
 | `approved` com pedido já `EXPIRED` ou `CANCELED`                                                                           | não muda                 | não muda                          | `APPROVED`, alerta `PAID_AFTER_EXPIRY` (estorno manual) |
 | `approved`, pedido ainda `PENDING_PAYMENT`, `date_approved > expiresAt`                                                    | não muda                 | não muda                          | `APPROVED`, alerta `PAID_AFTER_EXPIRY` (estorno manual) |
 | `approved` com valor, moeda ou referência divergente                                                                       | não muda                 | não muda                          | alerta `AMOUNT_MISMATCH`                                |
+| `approved` com pedido já `PAID` ou `SHIPPED` por outro caminho                                                             | não muda                 | não muda                          | alerta `DUPLICATE_PAYMENT`                              |
 | `rejected`, `cancelled`, `refunded`                                                                                        | não muda                 | não muda                          | status atualizado                                       |
 | status desconhecido                                                                                                        | não muda                 | não muda                          | não muda (só log)                                       |
 

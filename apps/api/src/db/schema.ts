@@ -37,7 +37,12 @@ export const paymentStatus = pgEnum('payment_status', [
 ]);
 
 /** Pagamento aprovado que não pagou o pedido. O estorno é manual (spec-014). */
-export const paymentAlert = pgEnum('payment_alert', ['PAID_AFTER_EXPIRY', 'AMOUNT_MISMATCH']);
+export const paymentAlert = pgEnum('payment_alert', [
+  'PAID_AFTER_EXPIRY',
+  'AMOUNT_MISMATCH',
+  // Pedido já pago (ou enviado) por outro caminho, como o painel.
+  'DUPLICATE_PAYMENT',
+]);
 
 export const categories = pgTable('categories', {
   id: serial('id').primaryKey(),

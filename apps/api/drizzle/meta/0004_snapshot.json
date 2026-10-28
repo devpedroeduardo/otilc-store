@@ -1,5 +1,5 @@
 {
-  "id": "bb1ab142-47bc-4383-af49-e71d2c1708fd",
+  "id": "92aac2d0-a0ba-40c7-a3e3-60ad5c525b69",
   "prevId": "025cf283-23b8-46f0-b85f-71a36de550d0",
   "version": "7",
   "dialect": "postgresql",
@@ -1000,7 +1000,8 @@
       "schema": "public",
       "values": [
         "PAID_AFTER_EXPIRY",
-        "AMOUNT_MISMATCH"
+        "AMOUNT_MISMATCH",
+        "DUPLICATE_PAYMENT"
       ]
     },
     "public.payment_status": {

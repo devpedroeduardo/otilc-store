@@ -1,4 +1,4 @@
-CREATE TYPE "public"."payment_alert" AS ENUM('PAID_AFTER_EXPIRY', 'AMOUNT_MISMATCH');--> statement-breakpoint
+CREATE TYPE "public"."payment_alert" AS ENUM('PAID_AFTER_EXPIRY', 'AMOUNT_MISMATCH', 'DUPLICATE_PAYMENT');--> statement-breakpoint
 CREATE TYPE "public"."payment_status" AS ENUM('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'REFUNDED');--> statement-breakpoint
 CREATE TABLE "payment_notifications" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

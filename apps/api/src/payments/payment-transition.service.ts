@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { DB, type Database } from '../db/client';
-import { orders, paymentNotifications, payments } from '../db/schema';
+import { orders, paymentAlert, paymentNotifications, payments } from '../db/schema';
 import { applyStockEffect, stockEffects } from '../orders/order-stock';
 import {
   PIX_PROVIDER,
@@ -18,7 +18,15 @@ export type SyncOutcome =
   | 'paid'
   | 'already_approved'
   | 'paid_after_expiry'
-  | 'amount_mismatch';
+  | 'amount_mismatch'
+  | 'duplicate_payment';
+
+/** Pagamento aprovado que não pagou o pedido ganha um alerta; o estorno é manual. */
+const alertFor: Partial<Record<SyncOutcome, (typeof paymentAlert.enumValues)[number]>> = {
+  amount_mismatch: 'AMOUNT_MISMATCH',
+  paid_after_expiry: 'PAID_AFTER_EXPIRY',
+  duplicate_payment: 'DUPLICATE_PAYMENT',
+};
 
 const sell = stockEffects['PENDING_PAYMENT>PAID']!;
 
@@ -118,20 +126,13 @@ export class PaymentTransitionService {
         if (changed.length > 0) await applyStockEffect(tx, order.id, sell);
         outcome = 'paid';
       } else if (order.status === 'PAID' || order.status === 'SHIPPED') {
-        this.logger.warn(
-          `Pagamento ${providerPaymentId} aprovado para pedido já pago ${order.id}.`,
-        );
-        outcome = 'already_approved';
+        // Pago por outro caminho (ex.: painel): a cobrança não paga o pedido de novo.
+        outcome = 'duplicate_payment';
       } else {
         outcome = 'paid_after_expiry';
       }
 
-      const alert =
-        outcome === 'amount_mismatch'
-          ? 'AMOUNT_MISMATCH'
-          : outcome === 'paid_after_expiry'
-            ? 'PAID_AFTER_EXPIRY'
-            : null;
+      const alert = alertFor[outcome] ?? null;
       if (alert) {
         this.logger.warn(`Pagamento ${providerPaymentId} do pedido ${order.id}: alerta ${alert}.`);
       }

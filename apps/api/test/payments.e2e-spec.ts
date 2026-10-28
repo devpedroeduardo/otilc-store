@@ -4,6 +4,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import request from 'supertest';
 import type { OrderStatus } from '@otilc/shared';
 import { orders, paymentNotifications, payments, products, variants } from '../src/db/schema';
+import { AdminOrdersService } from '../src/admin-orders/admin-orders.service';
 import { OrdersService } from '../src/orders/orders.service';
 import {
   PIX_PROVIDER,
@@ -473,6 +474,32 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
         alert: 'AMOUNT_MISMATCH',
       });
     });
+
+    it.each<[OrderStatus[]]>([[['PAID']], [['PAID', 'SHIPPED']]])(
+      'aprovado para pedido já pago pelo painel (%j) → alerta DUPLICATE_PAYMENT, pedido e estoque intactos',
+      async (steps) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { order, paymentId } = await orderWithPix(v.id);
+        const admin = ctx.app.get(AdminOrdersService);
+        for (const to of steps) await admin.updateStatus(order.id, to);
+        const final = steps[steps.length - 1];
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+        approve(paymentId);
+
+        await webhook(paymentId).expect(200);
+
+        expect(await orderStatus(order.id)).toBe(final);
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+        expect(await paymentOf(order.id)).toMatchObject({
+          status: 'APPROVED',
+          alert: 'DUPLICATE_PAYMENT',
+        });
+
+        // Reprocessar não muda nada.
+        await webhook(paymentId).expect(200);
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      },
+    );
 
     it('estresse: webhook aprovado e job de expiração ao mesmo tempo, PAID ou EXPIRED, nunca os dois', async () => {
       const ROUNDS = 6;
