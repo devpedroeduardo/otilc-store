@@ -36,7 +36,7 @@ O drizzle guarda quais migrações já rodaram em `drizzle.__drizzle_migrations`
    ORDER BY id;
    ```
 
-3. Resultado esperado: **4 linhas**, as migrações `0000` a `0003`, com os `hash` e `created_at` iguais aos do arquivo `apps/api/drizzle/meta/_journal.json` e dos SQLs da `main`. As migrações `0004` e `0005` **não** estão na tabela: o Pre-Deploy do primeiro deploy as aplica.
+3. Resultado esperado: **4 linhas**, as migrações `0000` a `0003`, com o `created_at` igual ao `when` de cada entrada de `apps/api/drizzle/meta/_journal.json` e o `hash` igual ao sha256 do SQL correspondente na `main`. As migrações `0004` e `0005` **não** estão na tabela: o Pre-Deploy do primeiro deploy as aplica.
 4. **Se o resultado for outro** (menos de 4 linhas, linhas a mais, `0004`/`0005` já presentes, tabela inexistente): **pare aqui**, não faça o deploy e chame a Bússola. Não tente corrigir a tabela na mão.
 
 ## 3. Pegar a connection string do pooler e o certificado do Supabase
@@ -56,7 +56,7 @@ Você vai colar estes dois valores só no painel do Render (passo 4). Não os sa
 ## 4. Aplicar o Blueprint no Render e acompanhar o primeiro deploy
 
 1. Render → **New** → **Blueprint** → escolha o repositório `otilc-store` e a branch `main`. O Render lê o `render.yaml` da raiz e propõe o serviço **`otilc-api`** (Docker, `apps/api/Dockerfile`, contexto na raiz, região Virginia, 1 instância, health check em `/api/health`).
-2. Se o Render pedir um plano, escolha o pago que você decidiu (o Blueprint sugere `starter`).
+2. Escolha o plano pago no painel; sem escolha, o Render usa `0.5c-512mb`.
 3. Preencha as variáveis marcadas como "sem valor" (`sync: false`) direto no painel:
 
    | Variável              | O que colocar                                                                                                                       |
@@ -114,15 +114,15 @@ O script só faz `GET`: não cria pedido, não faz login, não envia segredo. El
 
 ### Se falhar
 
-| Sintoma                                 | O que olhar                                                                                                                                                                       |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/health` com 503 ou sem resposta   | Render → Logs. Banco inalcançável: confira `DATABASE_URL` (session pooler, senha) e `DATABASE_CA_CERT` (PEM completo). Plano gratuito/dormindo? A primeira resposta pode demorar. |
-| API não sobe, log pede `WEB_ORIGIN`/CA  | Variável ausente ou fora do formato (`WEB_ORIGIN` precisa de https).                                                                                                              |
-| Pre-Deploy falhou                       | Render → Events → log do Pre-Deploy. O deploy é cancelado e a versão anterior segue no ar. Não rode SQL à mão: chame a Bússola.                                                   |
-| Lista de produtos vazia                 | O banco de produção pode não ter dados ainda; cadastre pelo painel admin e rode de novo.                                                                                          |
-| Home/produto da loja com erro           | Vercel → Deployment → Logs. Confira `API_URL` (URL do Render, sem barra final) e se a API está no ar.                                                                             |
-| Build da Vercel falhou por `ADMIN_MOCK` | Remova `NEXT_PUBLIC_ADMIN_MOCK` do ambiente Production e faça redeploy.                                                                                                           |
-| Login do admin falha no navegador       | `WEB_ORIGIN` deve ser exatamente a URL da loja (https, sem barra final).                                                                                                          |
+| Sintoma                                 | O que olhar                                                                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/health` com 503 ou sem resposta   | Render → Logs. Banco inalcançável: confira `DATABASE_URL` (session pooler, senha) e `DATABASE_CA_CERT` (PEM completo).          |
+| API não sobe, log pede `WEB_ORIGIN`/CA  | Variável ausente ou fora do formato (`WEB_ORIGIN` precisa de https).                                                            |
+| Pre-Deploy falhou                       | Render → Events → log do Pre-Deploy. O deploy é cancelado e a versão anterior segue no ar. Não rode SQL à mão: chame a Bússola. |
+| Lista de produtos vazia                 | O banco de produção pode não ter dados ainda; cadastre pelo painel admin e rode de novo.                                        |
+| Home/produto da loja com erro           | Vercel → Deployment → Logs. Confira `API_URL` (URL do Render, sem barra final) e se a API está no ar.                           |
+| Build da Vercel falhou por `ADMIN_MOCK` | Remova `NEXT_PUBLIC_ADMIN_MOCK` do ambiente Production e faça redeploy.                                                         |
+| Login do admin falha no navegador       | `WEB_ORIGIN` deve ser exatamente a URL da loja (https, sem barra final).                                                        |
 
 ### Reverter um deploy
 
