@@ -378,7 +378,7 @@ describe('Admin: produtos, variações e estoque (integração com Postgres)', (
       } = await productBySlug('05-camiseta-preta');
 
       for (let round = 0; round < 5; round++) {
-        await ctx.db.execute(sql`TRUNCATE order_items, orders`);
+        await ctx.db.execute(sql`TRUNCATE order_items, orders CASCADE`);
         await ctx.db.update(variants).set({ stock: 10, reserved: 0 }).where(eq(variants.id, v.id));
 
         const orders = Array.from({ length: 10 }, () => checkout(v.id));

@@ -34,13 +34,15 @@ test('compra: catálogo → categoria → produto → carrinho → pedido com es
     (r) => r.url().endsWith('/api/orders') && r.request().method() === 'POST',
   );
   await page.getByRole('button', { name: 'Finalizar pedido' }).click();
-  expect((await created).status()).toBe(201);
+  const response = await created;
+  expect(response.status()).toBe(201);
+  const order = (await response.json()) as { id: string; number: number };
 
-  const confirmation = page.getByRole('status');
-  await expect(confirmation).toContainText('Pedido criado. Suas peças estão reservadas até as');
-  const number = Number(
-    (await confirmation.getByText(/^Pedido nº \d+$/).textContent())?.replace(/\D/g, ''),
-  );
+  // Depois do checkout a loja leva o cliente à página do pedido. Sem credenciais do Mercado
+  // Pago no ambiente de E2E, o Pix fica desligado e a página avisa.
+  await expect(page).toHaveURL((url) => url.pathname === `/pedido/${order.id}`);
+  await expect(page.getByRole('heading', { name: 'Pix indisponível' })).toBeVisible();
+  const number = order.number;
 
   // Efeito no banco: pedido aguardando pagamento e a unidade presa na reserva.
   expect(await orderStatus(number)).toBe('PENDING_PAYMENT');

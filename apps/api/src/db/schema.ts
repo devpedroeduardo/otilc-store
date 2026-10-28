@@ -11,6 +11,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -26,6 +27,22 @@ export const orderStatus = pgEnum('order_status', [
 ]);
 
 export const adminRole = pgEnum('admin_role', ['OWNER', 'STAFF']);
+
+export const paymentStatus = pgEnum('payment_status', [
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'CANCELLED',
+  'REFUNDED',
+]);
+
+/** Pagamento aprovado que não pagou o pedido. O estorno é manual (spec-014). */
+export const paymentAlert = pgEnum('payment_alert', [
+  'PAID_AFTER_EXPIRY',
+  'AMOUNT_MISMATCH',
+  // Pedido já pago (ou enviado) por outro caminho, como o painel.
+  'DUPLICATE_PAYMENT',
+]);
 
 export const categories = pgTable('categories', {
   id: serial('id').primaryKey(),
@@ -184,6 +201,55 @@ export const adminSessions = pgTable(
     index('admin_sessions_user_idx').on(t.userId),
   ],
 );
+
+/**
+ * Cobranças Pix no Mercado Pago. O status vem só da consulta à API do provedor, nunca do corpo do
+ * webhook. No máximo uma cobrança PENDING por pedido (índice único parcial).
+ * RLS ligado sem regra de acesso, como as demais tabelas (spec-010).
+ */
+export const payments = pgTable(
+  'payments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id),
+    provider: varchar('provider', { length: 20 }).notNull().default('mercadopago'),
+    providerPaymentId: varchar('provider_payment_id', { length: 64 }).notNull().unique(),
+    status: paymentStatus('status').notNull(),
+    // Cópia do total do pedido no momento da cobrança, em centavos.
+    amountCents: integer('amount_cents').notNull(),
+    qrCode: text('qr_code'),
+    qrCodeBase64: text('qr_code_base64'),
+    // Validade do Pix no provedor (ver pix-expiration.ts); o prazo do pedido é orders.expires_at.
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    // Última consulta sob demanda ao provedor (limite de frequência por pedido).
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    alert: paymentAlert('alert'),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('payments_order_idx').on(t.orderId),
+    uniqueIndex('payments_one_pending_per_order_idx')
+      .on(t.orderId)
+      .where(sql`${t.status} = 'PENDING'`),
+    check('payments_provider_valid', sql`${t.provider} = 'mercadopago'`),
+    check('payments_amount_positive', sql`${t.amountCents} > 0`),
+  ],
+).enableRLS();
+
+/**
+ * Notificações do webhook já processadas, pelo `x-request-id`. Gravada na mesma transação da
+ * mudança de status: se algo falhar, nada é gravado e o reenvio do Mercado Pago é processado.
+ */
+export const paymentNotifications = pgTable('payment_notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  requestId: varchar('request_id', { length: 128 }).notNull().unique(),
+  providerPaymentId: varchar('provider_payment_id', { length: 64 }).notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
   products: many(products),

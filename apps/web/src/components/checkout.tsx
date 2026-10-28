@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { checkoutSchema, formatBRL, type OrderDto } from '@otilc/shared';
 import { useCart } from './cart-context';
@@ -10,6 +11,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
 type FieldErrors = Partial<Record<'name' | 'email' | 'phone', string>>;
 
 export function Checkout() {
+  const router = useRouter();
   const { lines, subtotalCents, remove, clear, ready } = useCart();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState<string | null>(null);
@@ -17,42 +19,10 @@ export function Checkout() {
   const [order, setOrder] = useState<OrderDto | null>(null);
 
   if (order) {
-    const expires = new Date(order.expiresAt).toLocaleTimeString('pt-BR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
     return (
-      <div className="cart">
-        <div className="panel" role="status">
-          <span className="mono muted">Pedido nº {order.number}</span>
-          <p className="alert ok">Pedido criado. Suas peças estão reservadas até as {expires}.</p>
-          <ul className="cart-list">
-            {order.items.map((i) => (
-              <li
-                key={i.variantId}
-                className="cart-item"
-                style={{ gridTemplateColumns: '1fr auto' }}
-              >
-                <span>
-                  {i.productName} <span className="muted">· {i.size}</span>
-                </span>
-                <span className="price">{formatBRL(i.unitPriceCents * i.quantity)}</span>
-              </li>
-            ))}
-          </ul>
-          <div className="total">
-            <span>Total</span>
-            <span>{formatBRL(order.totalCents)}</span>
-          </div>
-          <p className="muted">
-            O pagamento por Pix entra na próxima etapa do projeto. Por enquanto o pedido fica
-            aguardando pagamento e o estoque volta para a loja quando o prazo vence.
-          </p>
-          <Link href="/" className="btn btn-ghost">
-            Voltar ao catálogo
-          </Link>
-        </div>
-      </div>
+      <p className="empty" role="status">
+        Pedido nº {order.number} criado. Levando você ao pagamento…
+      </p>
     );
   }
 
@@ -103,8 +73,10 @@ export function Checkout() {
       });
       const body = await res.json().catch(() => ({}));
       if (res.status === 201) {
-        setOrder(body as OrderDto);
+        const created = body as OrderDto;
+        setOrder(created);
         clear();
+        router.push(`/pedido/${created.id}`);
       } else if (res.status === 409 || res.status === 422) {
         setMessage(
           `${body.message ?? 'Uma peça do carrinho não está mais disponível.'} Remova a peça e tente de novo.`,
