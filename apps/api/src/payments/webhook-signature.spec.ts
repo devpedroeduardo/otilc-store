@@ -65,15 +65,37 @@ describe('verifyWebhookSignature', () => {
     expect(verify({ requestId: odd, signature: header(sign(manifest(dataId, odd))) })).toBe(false);
   });
 
-  it('aceita ts dentro da janela de 5 minutos e recusa fora dela, nos dois sentidos', () => {
+  it('ts em segundos: aceita dentro da janela de 5 minutos e recusa fora dela, nos dois sentidos', () => {
     expect(verify({ now: now + SIGNATURE_TOLERANCE_MS })).toBe(true);
     expect(verify({ now: now - SIGNATURE_TOLERANCE_MS })).toBe(true);
     expect(verify({ now: now + SIGNATURE_TOLERANCE_MS + 1000 })).toBe(false);
     expect(verify({ now: now - SIGNATURE_TOLERANCE_MS - 1000 })).toBe(false);
   });
 
-  it('trata ts como segundos: o mesmo instante em milissegundos fica fora da janela', () => {
-    const ms = String(now);
-    expect(verify({ signature: header(sign(manifest(dataId, requestId, ms)), ms) })).toBe(false);
+  describe('ts em milissegundos (13 dígitos)', () => {
+    const ms = String(now + 123);
+    const msHeader = header(sign(manifest(dataId, requestId, ms)), ms);
+
+    it('aceita, assinando o ts cru', () => {
+      expect(verify({ signature: msHeader })).toBe(true);
+      // Assinar o ts convertido para segundos não vale: o texto assinado usa o valor do header.
+      const asSeconds = String(Math.floor(Number(ms) / 1000));
+      expect(verify({ signature: header(sign(manifest(dataId, requestId, asSeconds)), ms) })).toBe(
+        false,
+      );
+    });
+
+    it('aceita dentro da janela de 5 minutos e recusa fora dela, nos dois sentidos', () => {
+      expect(verify({ signature: msHeader, now: now + SIGNATURE_TOLERANCE_MS })).toBe(true);
+      expect(verify({ signature: msHeader, now: now + 123 - SIGNATURE_TOLERANCE_MS })).toBe(true);
+      expect(verify({ signature: msHeader, now: now + SIGNATURE_TOLERANCE_MS + 1000 })).toBe(false);
+      expect(verify({ signature: msHeader, now: now - SIGNATURE_TOLERANCE_MS - 1000 })).toBe(false);
+    });
+  });
+
+  it('recusa ts com 12 ou mais de 13 dígitos, mesmo assinado', () => {
+    for (const ts of [String(now).slice(0, 12), `${now}0`, `00${now}`]) {
+      expect(verify({ signature: header(sign(manifest(dataId, requestId, ts)), ts) })).toBe(false);
+    }
   });
 });

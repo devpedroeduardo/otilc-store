@@ -5,11 +5,12 @@ export const SIGNATURE_TOLERANCE_MS = 5 * 60_000;
 
 /** `x-request-id` aceito: o Mercado Pago envia um UUID. Fica gravado como chave de idempotência. */
 const REQUEST_ID = /^[A-Za-z0-9-]{1,128}$/;
-const TS = /^\d{1,12}$/;
+/** `ts` em segundos (até 11 dígitos) ou em milissegundos (13 dígitos); outro tamanho é recusado. */
+const TS = /^(\d{1,11}|\d{13})$/;
 const V1 = /^[0-9a-f]{64}$/i;
 
 export interface SignatureInput {
-  /** Header `x-signature`: `ts=<segundos>,v1=<hmac hex>`. */
+  /** Header `x-signature`: `ts=<segundos ou milissegundos>,v1=<hmac hex>`. */
   signature: unknown;
   /** Header `x-request-id`. */
   requestId: unknown;
@@ -23,7 +24,9 @@ export interface SignatureInput {
  * Confere a assinatura do webhook do Mercado Pago.
  *
  * Texto assinado com HMAC-SHA256 e o segredo do webhook (SDK oficial, sdk-nodejs
- * `src/utils/webhook`): `id:<data.id>;request-id:<x-request-id>;ts:<ts>;`. O `ts` é em segundos.
+ * `src/utils/webhook`): `id:<data.id>;request-id:<x-request-id>;ts:<ts>;`, com o `ts` cru, como
+ * veio no header. A documentação oficial traz exemplos em milissegundos (13 dígitos) e em segundos
+ * (10 dígitos): os dois são aceitos, e a janela de 5 minutos usa o valor convertido.
  * A versão antiga da documentação pedia `data.id` alfanumérico em minúsculas e o SDK atual usa o
  * valor cru: as duas formas são aceitas, ambas exigem o segredo. Ids de pagamento são numéricos.
  * Header ausente ou repetido, formato inválido, assinatura diferente ou `ts` fora da janela de
@@ -37,7 +40,8 @@ export function verifyWebhookSignature(input: SignatureInput): boolean {
   const parts = parseSignature(signature);
   if (!parts) return false;
   const { ts, v1 } = parts;
-  if (Math.abs(now - Number(ts) * 1000) > SIGNATURE_TOLERANCE_MS) return false;
+  const tsMs = ts.length === 13 ? Number(ts) : Number(ts) * 1000;
+  if (Math.abs(now - tsMs) > SIGNATURE_TOLERANCE_MS) return false;
 
   const expected = Buffer.from(v1, 'hex');
   const candidates = new Set([dataId, dataId.toLowerCase()]);
