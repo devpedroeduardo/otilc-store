@@ -91,7 +91,7 @@ Formação e roteamento em [`routing.md`](routing.md); papéis em [`roles/`](rol
 4. Build em worktree própria (Forja ou Faísca, por roteamento)
 5. PR aberto (autor) → avisa Bússola e Formiga
 6. CI: Formiga vigia e manda resumo de até 5 linhas à Bússola ([cicd](roles/cicd.md))
-7. Revisão cruzada (o outro dev, só leitura, com [revisor](roles/revisor.md))
+7. Revisão cruzada: Lente (Codex, só leitura, com [revisor](roles/revisor.md)); em segurança, banco e pagamento, segunda revisão pelo outro dev, também só leitura
 8. Correções (autor; máx. 2 rodadas, depois escala ao Pedro)
 9. Pronto para merge → Bússola avisa o Pedro (status 🟠)
 10. Merge (Pedro) → deploy automático → Formiga faz smoke test
