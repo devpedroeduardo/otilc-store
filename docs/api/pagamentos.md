@@ -1,14 +1,14 @@
 # API de pagamentos (Pix)
 
-Contrato dos endpoints de pagamento por Pix com o Mercado Pago (sandbox). Decisões na [spec-014](../../specs/014-pix-mercado-pago.md).
+Contrato dos endpoints de pagamento por Pix com o Mercado Pago (sandbox). Decisões na [spec-014](../../specs/014-pix-mercado-pago.md) e na [spec-015](../../specs/015-conciliacao-pix.md) (conciliação, cancelamento e alertas).
 Schemas e DTOs citados aqui estão em [`packages/shared/src/payments.ts`](../../packages/shared/src/payments.ts).
 
 ## Regras gerais
 
 - **O valor nunca vem do navegador.** A cobrança usa sempre `orders.totalCents`, lido do banco. Nenhum endpoint aceita valor no corpo.
 - **O status do pagamento vem só da API do Mercado Pago** (`GET /v1/payments/{id}`). A notificação do webhook é só um aviso para ir conferir; o status escrito no corpo dela é ignorado.
-- **Uma transição só.** Webhook e verificação sob demanda usam a mesma função para mudar o pedido. A mudança `PENDING_PAYMENT → PAID` é condicional e acontece uma vez, com o mesmo efeito no estoque do painel (`reserved -= qtd` e `stock -= qtd`, ver [admin.md](admin.md)).
-- IDs na rota são UUID; ID malformado responde `400`, ID inexistente `404`. Todas as rotas seguem o limite global de requisições (`429`).
+- **Uma transição só.** Webhook, verificação sob demanda, conciliação periódica e cancelamento do Pix expirado usam a mesma função para mudar o pedido. A mudança `PENDING_PAYMENT → PAID` é condicional e acontece uma vez, com o mesmo efeito no estoque do painel (`reserved -= qtd` e `stock -= qtd`, ver [admin.md](admin.md)).
+- IDs na rota são UUID; ID malformado responde `400`, ID inexistente `404`. As rotas seguem o limite global de requisições (120/min por IP, `429`), menos o webhook, que tem limite próprio de 600/min por IP.
 - Logs nunca registram token, segredo, header de assinatura, QR code nem e-mail do cliente.
 
 ### Pix desligado
@@ -91,7 +91,7 @@ Sem corpo. Devolve a cobrança **mais recente** do pedido e o status atual do pe
 
 ### `POST /api/webhooks/mercadopago` — notificação do Mercado Pago
 
-Chamada de servidor para servidor: CORS não se aplica. Segue o limite global de requisições.
+Chamada de servidor para servidor: CORS não se aplica. Limite próprio de **600 requisições por minuto por IP** (`429` acima disso), folga para as rajadas do Mercado Pago; o resto da API fica em 120/min. Requisição forjada continua barrada pela assinatura.
 
 Exemplo: `POST /api/webhooks/mercadopago?data.id=999999999&type=payment`
 
@@ -131,9 +131,51 @@ Efeito da transição, pelo status vindo da consulta ao Mercado Pago:
 | `approved`, pedido ainda `PENDING_PAYMENT`, `date_approved > expiresAt`                                                    | não muda                 | não muda                          | `APPROVED`, alerta `PAID_AFTER_EXPIRY` (estorno manual) |
 | `approved` com valor, moeda ou referência divergente                                                                       | não muda                 | não muda                          | alerta `AMOUNT_MISMATCH`                                |
 | `approved` com pedido já `PAID` ou `SHIPPED` por outro caminho                                                             | não muda                 | não muda                          | alerta `DUPLICATE_PAYMENT`                              |
-| `rejected`, `cancelled`, `refunded`                                                                                        | não muda                 | não muda                          | status atualizado                                       |
+| cobrança já `APPROVED` e `refunded`, `charged_back` ou `in_mediation` (estorno ou contestação)                             | não muda                 | não muda                          | alerta `PAYMENT_REVERSED`; `refunded` vira `REFUNDED`   |
+| `rejected`, `cancelled`, `refunded` com a cobrança ainda `PENDING`                                                         | não muda                 | não muda                          | status atualizado                                       |
 | status desconhecido                                                                                                        | não muda                 | não muda                          | não muda (só log)                                       |
 
-Mapeamento: `pending`, `in_process` e `authorized` → `PENDING`; `approved` → `APPROVED`; `rejected` → `REJECTED`; `cancelled` → `CANCELLED`; `refunded` → `REFUNDED`; qualquer outro (`charged_back`, `in_mediation`...) é desconhecido. Uma cobrança nunca volta para `PENDING`.
+Mapeamento: `pending`, `in_process` e `authorized` → `PENDING`; `approved` → `APPROVED`; `rejected` → `REJECTED`; `cancelled` → `CANCELLED`; `refunded` → `REFUNDED`; qualquer outro é desconhecido, menos `charged_back` e `in_mediation` numa cobrança já `APPROVED` (estorno ou contestação, acima). Uma cobrança nunca volta para `PENDING`, e só uma `PENDING` vira `REJECTED`, `CANCELLED` ou `REFUNDED` por esta linha: uma resposta atrasada (`cancelled` do cancelamento, por exemplo) não faz uma `APPROVED` ou `REFUNDED` regredir, e uma `APPROVED` só vira `REFUNDED` pelo estorno. `REFUNDED` é final: nem um `approved` atrasado a aprova de novo ou paga o pedido. Uma `PENDING` que o Mercado Pago já mostra `refunded` (aprovada e estornada entre duas consultas) vira `REFUNDED` sem alerta, porque o pedido nunca foi pago, e gera aviso no log com o id do pagamento e do pedido.
 
-Reprocessar um pagamento já aprovado não faz nada. A transação trava o pedido e depois as variações, na mesma ordem do job de expiração e do painel, então webhook e expiração simultâneos terminam com o pedido `PAID` ou `EXPIRED`, nunca os dois. Os alertas ficam só no banco nesta versão.
+**Momento da aprovação**: `date_approved` do Mercado Pago; se vier vazio, `date_last_updated`; sem os dois, a hora da consulta. Os dois últimos casos geram aviso no log com o id do pagamento, porque essa data decide se o pagamento entrou no prazo do pedido.
+
+Reprocessar um pagamento já aprovado não faz nada. A transação trava o pedido e depois as variações, na mesma ordem do job de expiração e do painel, então webhook e expiração simultâneos terminam com o pedido `PAID` ou `EXPIRED`, nunca os dois.
+
+### Alertas
+
+Os alertas não aparecem na API pública nem no painel nesta versão (o painel é a spec-016); ficam no banco e no log:
+
+| Alerta              | Quando                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------- |
+| `PAID_AFTER_EXPIRY` | Aprovado depois do prazo do pedido, ou com o pedido `EXPIRED`/`CANCELED`                 |
+| `AMOUNT_MISMATCH`   | Aprovado com valor, moeda ou referência diferente do pedido                              |
+| `DUPLICATE_PAYMENT` | Aprovado com o pedido já `PAID` ou `SHIPPED` por outro caminho                           |
+| `PAYMENT_REVERSED`  | Estornado (`refunded`) ou contestado (`charged_back`, `in_mediation`) depois de aprovado |
+
+- **Os alertas se acumulam** (decisão do Pedro na spec-015): a tabela `payment_alerts` guarda todos os alertas de cada pagamento, com data, e nenhum apaga ou substitui outro. Exemplo: um Pix pago depois do prazo e depois estornado termina com `PAID_AFTER_EXPIRY` e `PAYMENT_REVERSED`.
+- Cada tipo de alerta aparece no máximo uma vez por pagamento (`UNIQUE (payment_id, alert)`): repetir a mesma notificação não grava nem registra nada de novo.
+- `payments.alert` guarda só o primeiro alerta do pagamento e nunca é sobrescrita.
+- Todo alerta novo gera um aviso (`warn`) no log com o id do pagamento, o id do pedido e o alerta, sem dados do cliente.
+- O estorno ao cliente continua manual, no painel do Mercado Pago.
+
+## Conciliação periódica
+
+A API confere sozinha os pagamentos com o Mercado Pago, para corrigir o que o webhook e a verificação sob demanda perderam. Roda dentro da API, a cada `PAYMENT_RECONCILIATION_INTERVAL_MS` (padrão 5 minutos; de 30 s a 1 h), só com o Pix ligado.
+
+- **Seleção**, até 50 pagamentos por rodada, os nunca conferidos primeiro (`last_checked_at` nulo, depois o mais antigo):
+  - `PENDING` criados há mais de 2 minutos (o webhook costuma chegar antes) e há menos de 24 horas;
+  - `APPROVED` nos últimos 7 dias e não conferidos há 6 horas, para pegar estorno e contestação;
+  - nunca um pagamento conferido há menos de 20 segundos (pela verificação sob demanda ou por outra rodada).
+- **Várias instâncias**: a rodada reivindica os pagamentos num único comando (`FOR UPDATE SKIP LOCKED` e `last_checked_at = now()`). Uma instância pula o que outra está reivindicando e, depois do commit, o descarta pela regra dos 20 segundos. Duas rodadas simultâneas nunca consultam o mesmo pagamento.
+- **Sem trava aberta**: a consulta ao Mercado Pago só acontece depois de a reivindicação terminar; a mudança de estado é a mesma transição do webhook (tabela acima).
+- **Falha** (erro, tempo esgotado ou pagamento não encontrado no Mercado Pago): aviso no log com o id do pagamento, e a rodada segue para o próximo. O `last_checked_at` volta ao valor de antes da reivindicação (se ninguém conferiu o pagamento no meio), então a rodada seguinte tenta de novo, inclusive para `APPROVED`, sem esperar as 6 horas.
+
+## Cancelamento do Pix quando o pedido expira
+
+O job de expiração (a cada minuto) devolve o estoque dos pedidos vencidos e, **depois do commit**, cancela no Mercado Pago o Pix `PENDING` de cada um deles (`PUT /v1/payments/{id}` com `{ "status": "cancelled" }`, mesmo timeout das outras chamadas, resposta validada). A resposta passa pela mesma transição:
+
+- `cancelled`: a cobrança vira `CANCELLED`.
+- `approved` (o cliente pagou antes de o cancelamento chegar): o pedido continua `EXPIRED` e a cobrança ganha o alerta `PAID_AFTER_EXPIRY`.
+- Falha no cancelamento: só aviso no log. O estoque já foi devolvido e a conciliação confere o pagamento depois, dentro da janela de 24 horas.
+
+A validade do Pix no Mercado Pago (31 minutos) e o prazo do pedido (30 minutos) não mudam; o cancelamento fecha o minuto de diferença entre os dois.

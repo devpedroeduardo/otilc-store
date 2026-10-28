@@ -51,6 +51,14 @@ describe('RLS nas tabelas do schema public (integração com Postgres)', () => {
     expect(covered.filter((t) => !t.rls)).toEqual([]);
   });
 
+  it('payment_alerts (spec-015) existe e tem RLS habilitado', async () => {
+    const tables = await publicTables();
+
+    expect(tables.filter((t) => t.name === 'payment_alerts')).toEqual([
+      { name: 'payment_alerts', rls: true, forced: false },
+    ]);
+  });
+
   it('toda tabela do schema public tem RLS habilitado', async () => {
     const tables = await publicTables();
 

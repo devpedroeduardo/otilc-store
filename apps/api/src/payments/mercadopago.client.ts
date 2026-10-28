@@ -11,6 +11,8 @@ export interface ProviderPayment {
   amountCents: number | null;
   currency: string | null;
   dateApproved: Date | null;
+  /** Última mudança no Mercado Pago; usada quando a aprovação vem sem `date_approved`. */
+  dateLastUpdated: Date | null;
 }
 
 export interface CreatedPixPayment extends ProviderPayment {
@@ -28,10 +30,12 @@ export interface CreatePixInput {
   idempotencyKey: string;
 }
 
-/** As duas chamadas do Mercado Pago que a loja usa. Os testes injetam um cliente simulado. */
+/** As chamadas do Mercado Pago que a loja usa. Os testes injetam um cliente simulado. */
 export interface PixProvider {
   createPixPayment(input: CreatePixInput): Promise<CreatedPixPayment>;
   getPayment(id: string): Promise<ProviderPayment>;
+  /** Cancela o Pix ainda não pago; devolve o pagamento como ficou no Mercado Pago. */
+  cancelPayment(id: string): Promise<ProviderPayment>;
 }
 
 export const PIX_PROVIDER = Symbol('PIX_PROVIDER');
@@ -83,6 +87,7 @@ const paymentSchema = z.object({
     .pipe(z.number().nonnegative().finite()),
   currency_id: z.string().max(10).nullish(),
   date_approved: z.iso.datetime({ offset: true }).nullish(),
+  date_last_updated: z.iso.datetime({ offset: true }).nullish(),
 });
 
 const createdPaymentSchema = paymentSchema.extend({
@@ -102,6 +107,7 @@ function toProviderPayment(p: z.infer<typeof paymentSchema>): ProviderPayment {
     amountCents: toCentsExact(p.transaction_amount),
     currency: p.currency_id ?? null,
     dateApproved: p.date_approved ? new Date(p.date_approved) : null,
+    dateLastUpdated: p.date_last_updated ? new Date(p.date_last_updated) : null,
   };
 }
 
@@ -140,8 +146,22 @@ export class MercadoPagoClient implements PixProvider {
   async getPayment(id: string): Promise<ProviderPayment> {
     if (!/^\d{1,30}$/.test(id)) throw new PixProviderError('Id de pagamento inválido.');
     const json = await this.request(`/v1/payments/${id}`, { method: 'GET' });
+    return this.parsePayment(json, id, 'Resposta inesperada ao consultar o Pix.');
+  }
+
+  async cancelPayment(id: string): Promise<ProviderPayment> {
+    if (!/^\d{1,30}$/.test(id)) throw new PixProviderError('Id de pagamento inválido.');
+    const json = await this.request(`/v1/payments/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    });
+    return this.parsePayment(json, id, 'Resposta inesperada ao cancelar o Pix.');
+  }
+
+  private parsePayment(json: unknown, id: string, message: string): ProviderPayment {
     const parsed = paymentSchema.safeParse(json);
-    if (!parsed.success) throw new PixProviderError('Resposta inesperada ao consultar o Pix.');
+    if (!parsed.success) throw new PixProviderError(message);
     if (parsed.data.id !== id) throw new PixProviderError('O provedor devolveu outro pagamento.');
     return toProviderPayment(parsed.data);
   }

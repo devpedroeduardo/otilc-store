@@ -36,12 +36,14 @@ export const paymentStatus = pgEnum('payment_status', [
   'REFUNDED',
 ]);
 
-/** Pagamento aprovado que não pagou o pedido. O estorno é manual (spec-014). */
+/** Pagamento aprovado que não pagou o pedido, ou desfeito depois. O estorno é manual (spec-014). */
 export const paymentAlert = pgEnum('payment_alert', [
   'PAID_AFTER_EXPIRY',
   'AMOUNT_MISMATCH',
   // Pedido já pago (ou enviado) por outro caminho, como o painel.
   'DUPLICATE_PAYMENT',
+  // Pago e depois estornado ou contestado no Mercado Pago; o pedido não muda (spec-015).
+  'PAYMENT_REVERSED',
 ]);
 
 export const categories = pgTable('categories', {
@@ -225,6 +227,7 @@ export const payments = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     // Última consulta sob demanda ao provedor (limite de frequência por pedido).
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    // Primeiro alerta do pagamento, nunca sobrescrito; o histórico completo é payment_alerts.
     alert: paymentAlert('alert'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -235,6 +238,8 @@ export const payments = pgTable(
     uniqueIndex('payments_one_pending_per_order_idx')
       .on(t.orderId)
       .where(sql`${t.status} = 'PENDING'`),
+    // Varredura da conciliação (spec-015): PENDING recentes e APPROVED da última semana.
+    index('payments_status_created_idx').on(t.status, t.createdAt),
     check('payments_provider_valid', sql`${t.provider} = 'mercadopago'`),
     check('payments_amount_positive', sql`${t.amountCents} > 0`),
   ],
@@ -250,6 +255,23 @@ export const paymentNotifications = pgTable('payment_notifications', {
   providerPaymentId: varchar('provider_payment_id', { length: 64 }).notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
 }).enableRLS();
+
+/**
+ * Histórico de alertas dos pagamentos (spec-015): eles se acumulam, nenhum substitui outro.
+ * `UNIQUE (payment_id, alert)` torna a gravação idempotente (`ON CONFLICT DO NOTHING`).
+ */
+export const paymentAlerts = pgTable(
+  'payment_alerts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    paymentId: uuid('payment_id')
+      .notNull()
+      .references(() => payments.id),
+    alert: paymentAlert('alert').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('payment_alerts_payment_alert_unique').on(t.paymentId, t.alert)],
+).enableRLS();
 
 export const categoriesRelations = relations(categories, ({ many }) => ({
   products: many(products),

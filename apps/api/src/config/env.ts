@@ -18,6 +18,13 @@ const envSchema = z
       .min(5)
       .max(24 * 60)
       .default(30),
+    // Intervalo da conciliação periódica do Pix com o Mercado Pago (spec-015): 30 s a 1 h.
+    PAYMENT_RECONCILIATION_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(30_000)
+      .max(60 * 60_000)
+      .default(5 * 60_000),
     // Pix com Mercado Pago (spec-014). Valores reais só no .env, nunca no repositório.
     MP_ACCESS_TOKEN: z.preprocess(blankAsMissing, z.string().min(8).max(500).optional()),
     MP_WEBHOOK_SECRET: z.preprocess(blankAsMissing, z.string().min(8).max(500).optional()),

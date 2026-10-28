@@ -54,6 +54,7 @@ describe('MercadoPagoClient', () => {
       amountCents: 25980,
       currency: 'BRL',
       dateApproved: null,
+      dateLastUpdated: null,
       qrCode: created.point_of_interaction.transaction_data.qr_code,
       qrCodeBase64,
     });
@@ -86,6 +87,7 @@ describe('MercadoPagoClient', () => {
         status: 'approved',
         transaction_amount: '259.80',
         date_approved: '2026-10-28T09:10:00.000-03:00',
+        date_last_updated: '2026-10-28T09:10:05.000-03:00',
       }),
     );
     const payment = await new MercadoPagoClient(token, fetchFn).getPayment('5466310457');
@@ -95,7 +97,54 @@ describe('MercadoPagoClient', () => {
       status: 'approved',
       amountCents: 25980,
       dateApproved: new Date('2026-10-28T12:10:00.000Z'),
+      dateLastUpdated: new Date('2026-10-28T12:10:05.000Z'),
     });
+  });
+
+  it('cancela o Pix com PUT status=cancelled, timeout, e devolve o pagamento validado', async () => {
+    const fetchFn = fakeFetch(() =>
+      json({ ...created, status: 'cancelled', date_last_updated: '2026-10-28T12:31:00.000Z' }),
+    );
+    const payment = await new MercadoPagoClient(token, fetchFn).cancelPayment('5466310457');
+
+    expect(payment).toMatchObject({
+      id: '5466310457',
+      status: 'cancelled',
+      dateApproved: null,
+      dateLastUpdated: new Date('2026-10-28T12:31:00.000Z'),
+    });
+    expect(JSON.stringify(payment)).not.toContain('ana@example.com');
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe('https://api.mercadopago.com/v1/payments/5466310457');
+    expect(init?.method).toBe('PUT');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.headers).toMatchObject({
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    });
+    expect(JSON.parse(String(init?.body))).toEqual({ status: 'cancelled' });
+  });
+
+  it('cancelamento: resposta fora do schema, outro pagamento, erro HTTP ou tempo esgotado é falha', async () => {
+    const timeout = Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+    const failures = [
+      () => json({ ...created, status: undefined }),
+      () => json({ ...created, date_last_updated: 'ontem' }),
+      () => json({ ...created, id: 1 }),
+      () => json({ message: 'cannot cancel approved payment' }, 400),
+      () => Promise.reject(timeout),
+    ];
+    for (const failure of failures) {
+      const client = new MercadoPagoClient(token, fakeFetch(failure));
+      const err = await client.cancelPayment('5466310457').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(PixProviderError);
+      expect((err as Error).message).not.toContain(token);
+    }
+    const fetchFn = fakeFetch(() => json(created));
+    await expect(
+      new MercadoPagoClient(token, fetchFn).cancelPayment('1/../../users'),
+    ).rejects.toBeInstanceOf(PixProviderError);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 
   it('valor fora de centavos inteiros vira amountCents nulo (nunca igual ao total)', async () => {
