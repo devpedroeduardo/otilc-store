@@ -59,6 +59,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
           amountCents: input.amountCents,
           currency: 'BRL',
           dateApproved: null,
+          dateLastUpdated: null,
         });
       }
       return { ...remote.get(id)!, qrCode: `00020126-pix-ficticio-${id}`, qrCodeBase64: QR_BASE64 };
