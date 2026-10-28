@@ -5,6 +5,7 @@ import { DB, type Database } from '../db/client';
 import { payments } from '../db/schema';
 import { PIX_PROVIDER, type PixProvider } from './mercadopago.client';
 import { PaymentTransitionService } from './payment-transition.service';
+import { skipIfRunning } from './skip-if-running';
 import { ON_DEMAND_CHECK_SECONDS } from './pix.service';
 
 /** Máximo de pagamentos conferidos com o Mercado Pago por rodada. */
@@ -29,7 +30,6 @@ export interface ReconciliationResult {
 export class PaymentReconciliationService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(PaymentReconciliationService.name);
   private timer?: NodeJS.Timeout;
-  private running = false;
 
   constructor(
     @Inject(DB) private readonly db: Database,
@@ -40,14 +40,12 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
 
   onModuleInit(): void {
     if (this.env.NODE_ENV === 'test' || !this.provider) return;
-    this.timer = setInterval(() => {
-      // Uma rodada lenta (Mercado Pago devagar) não se sobrepõe à seguinte nesta instância.
-      if (this.running) return;
-      this.running = true;
-      this.reconcile()
-        .catch((err) => this.logger.error(err))
-        .finally(() => (this.running = false));
-    }, this.env.PAYMENT_RECONCILIATION_INTERVAL_MS);
+    // Uma rodada lenta (Mercado Pago devagar) não se sobrepõe à seguinte nesta instância.
+    const tick = skipIfRunning(
+      () => this.reconcile(),
+      (err) => this.logger.error(err),
+    );
+    this.timer = setInterval(() => void tick(), this.env.PAYMENT_RECONCILIATION_INTERVAL_MS);
     this.timer.unref();
   }
 
@@ -65,7 +63,7 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
     if (!this.provider) return { checked: 0, failed: 0 };
 
     const due = this.db
-      .select({ id: payments.id })
+      .select({ id: payments.id, previous: payments.lastCheckedAt })
       .from(payments)
       .where(
         and(
@@ -98,18 +96,25 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
       )
       .orderBy(sql`${payments.lastCheckedAt} ASC NULLS FIRST`)
       .limit(RECONCILIATION_BATCH)
-      .for('update', { skipLocked: true });
+      .for('update', { skipLocked: true })
+      .as('due');
 
     // Reivindicação num comando só: o UPDATE termina (e solta as travas) antes das consultas.
     // Outra instância pula as linhas travadas e, depois do commit, as descarta pelo filtro de 20 s.
     const claimed = await this.db
       .update(payments)
       .set({ lastCheckedAt: sql`now()` })
-      .where(inArray(payments.id, due))
-      .returning({ providerPaymentId: payments.providerPaymentId });
+      .from(due)
+      .where(eq(payments.id, due.id))
+      .returning({
+        id: payments.id,
+        providerPaymentId: payments.providerPaymentId,
+        previous: due.previous,
+        claimedAt: payments.lastCheckedAt,
+      });
 
     let failed = 0;
-    for (const { providerPaymentId } of claimed) {
+    for (const { id, providerPaymentId, previous, claimedAt } of claimed) {
       try {
         await this.transition.sync(providerPaymentId);
       } catch (err) {
@@ -117,6 +122,7 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
         this.logger.warn(
           `Conciliação do pagamento ${providerPaymentId} falhou: ${(err as Error).message}`,
         );
+        await this.release(id, previous, claimedAt);
       }
     }
     if (claimed.length > 0) {
@@ -125,6 +131,25 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
       );
     }
     return { checked: claimed.length, failed };
+  }
+
+  /**
+   * Devolve o `last_checked_at` de antes da reivindicação, para a rodada seguinte tentar de novo
+   * (um APPROVED esperaria 6 h). Só se ninguém conferiu o pagamento depois: o banco guarda
+   * microssegundos e o `Date` só milissegundos, por isso o limite é `claimedAt + 1 ms`.
+   */
+  private async release(id: string, previous: Date | null, claimedAt: Date | null): Promise<void> {
+    if (!claimedAt) return;
+    try {
+      await this.db
+        .update(payments)
+        .set({ lastCheckedAt: previous })
+        .where(
+          and(eq(payments.id, id), lt(payments.lastCheckedAt, new Date(claimedAt.getTime() + 1))),
+        );
+    } catch (err) {
+      this.logger.error(err);
+    }
   }
 
   /**
