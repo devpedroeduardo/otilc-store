@@ -37,7 +37,7 @@ Commit `feat(shared): contrato do Pix` contendo os schemas Zod, os tipos e `docs
 ### Fase 2 — API e banco (Forja)
 
 1. **Banco** (`schema.ts` + `npm run db:generate -w @otilc/api`, migração `0004`):
-   - Enum `payment_status` (os 5 valores acima) e enum `payment_alert`: `'PAID_AFTER_EXPIRY' | 'AMOUNT_MISMATCH'`.
+   - Enum `payment_status` (os 5 valores acima) e enum `payment_alert`: `'PAID_AFTER_EXPIRY' | 'AMOUNT_MISMATCH' | 'DUPLICATE_PAYMENT'` (o terceiro entrou na correção 1 do PR #24).
    - Tabela `payments`: `id` uuid pk, `order_id` fk `orders` not null, `provider` varchar com `CHECK (provider = 'mercadopago')`, `provider_payment_id` varchar **UNIQUE** not null, `status` `payment_status` not null, `amount_cents` integer com `CHECK (amount_cents > 0)`, `qr_code` text, `qr_code_base64` text, `expires_at` timestamptz not null, `last_checked_at` timestamptz null, `alert` `payment_alert` null, `approved_at` timestamptz null, `created_at` e `updated_at` timestamptz. Índice único parcial: no máximo uma cobrança `PENDING` por pedido.
    - Tabela `payment_notifications`: `id` uuid pk, `request_id` varchar **UNIQUE** not null (header `x-request-id`), `provider_payment_id` varchar not null, `received_at` timestamptz not null.
    - Na mesma migração, `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` nas duas tabelas novas (sem `FORCE`, sem policy). Se o drizzle-kit não gerar isso, use uma migração custom `0005` como na spec-010.
