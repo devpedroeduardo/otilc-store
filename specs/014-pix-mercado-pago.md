@@ -12,7 +12,7 @@ O cliente cria o pedido, é levado à página do pedido, paga por Pix (QR code o
 
 ## Contexto
 
-- Decisões do Pedro: nota "Grilling Pix" (rodada 1, Q1 a Q12, com o ajuste da Q11). Fatos do repositório: nota "Recon Pix".
+- Decisões do Pedro: nota "Grilling Pix" (rodada 1, Q1 a Q12, com o ajuste da Q11; Q13 sobre a validade do Pix, decidida em 2026-10-28). Fatos do repositório: nota "Recon Pix".
 - Hoje: enum `order_status` com `PENDING_PAYMENT`, `PAID`, `CANCELED`, `EXPIRED`, `SHIPPED`. A reserva dura `ORDER_HOLD_MINUTES` (30). O job de `order-expiration.service.ts` expira pedidos com `FOR UPDATE SKIP LOCKED` e `lockOrder`. A única transição para `PAID` é a do painel (`admin-orders.service.ts`), que baixa `reserved` e `stock` sob as mesmas travas.
 - Leia o `README.md` ("Destaques técnicos") e os testes de concorrência de `apps/api/test/orders.e2e-spec.ts` e `apps/api/test/admin-orders.e2e-spec.ts`. Nenhuma dessas garantias pode regredir.
 - A spec-010 exige RLS em **toda** tabela do `public` (`apps/api/test/rls.e2e-spec.ts`). As tabelas novas precisam de `ENABLE ROW LEVEL SECURITY` na migração, sem `FORCE` e sem policy.
@@ -44,10 +44,10 @@ Commit `feat(shared): contrato do Pix` contendo os schemas Zod, os tipos e `docs
 2. **Cliente do Mercado Pago** (`apps/api/src/payments/`): `fetch` nativo do Node 22, **sem SDK** e sem dependência nova. Só duas chamadas: criar pagamento Pix (`POST /v1/payments`, `payment_method_id: 'pix'`) e consultar pagamento (`GET /v1/payments/{id}`). Respostas validadas com Zod; resposta fora do schema é tratada como falha do provedor. Timeout explícito. Atrás de uma interface injetável, para os testes usarem um cliente simulado.
 3. **Criar a cobrança** (`POST /api/orders/:id/pix`):
    - Valor = `orders.totalCents` lido do banco. Nada de valor vindo do cliente.
-   - `external_reference` = id do pedido; `payer.email` = e-mail do pedido; `notification_url` = `MP_NOTIFICATION_URL`; `date_of_expiration` = `orders.expiresAt`.
+   - `external_reference` = id do pedido; `payer.email` = e-mail do pedido; `notification_url` = `MP_NOTIFICATION_URL`; `date_of_expiration` = criação + 31 min (Q13: a documentação exige no mínimo 30 min; 1 min de folga). O prazo do pedido continua `orders.expiresAt`, e é ele que a página mostra.
    - Header `X-Idempotency-Key` determinístico por pedido e tentativa (a mesma tentativa sempre gera a mesma chave).
    - Já existe `PENDING` → devolve sem chamar o Mercado Pago. Duas chamadas simultâneas para o mesmo pedido terminam com **uma** cobrança no banco (UNIQUE + `ON CONFLICT`), e as duas respostas trazem a mesma cobrança.
-   - **Verifique na documentação oficial** se o Pix tem validade mínima. Se o mínimo for maior que o tempo restante do pedido, **pare e reporte à Bússola** sem escolher sozinha.
+   - Q13 (Pedro, 2026-10-28): pagamento aprovado depois que o pedido já virou `EXPIRED` cai em `PAID_AFTER_EXPIRY`, com estorno manual.
 4. **Transição idempotente** (uma função só, usada pelo webhook e pela verificação sob demanda):
    - Entrada: `provider_payment_id`. Consulta o pagamento no Mercado Pago **fora** da transação. O status do corpo da notificação **nunca** é usado.
    - Numa transação, com a mesma ordem de travas do job de expiração e do painel (pedido, depois variantes em `lockOrder`), atualiza `payments.status`. Status desconhecido do Mercado Pago não muda nada e gera log sem dados sensíveis.
@@ -126,7 +126,7 @@ Contrato e banco:
 
 API (`apps/api/test/payments.e2e-spec.ts`, Postgres real, cliente do Mercado Pago simulado, segredo gerado no teste):
 
-- [ ] `POST /pix` cria a cobrança com o valor do banco e `date_of_expiration` igual a `expiresAt`; segunda chamada devolve a mesma sem chamar o provedor
+- [ ] `POST /pix` cria a cobrança com o valor do banco e `date_of_expiration` igual a criação + 31 min (Q13); segunda chamada devolve a mesma sem chamar o provedor
 - [ ] Duas chamadas simultâneas de `POST /pix` para o mesmo pedido geram uma cobrança só
 - [ ] `POST /pix` em pedido `PAID`, `EXPIRED` ou vencido → `409`; Pix desligado → `503`; id inválido → `400`
 - [ ] Webhook com assinatura inválida, ausente ou fora da janela → `401` e nada gravado
