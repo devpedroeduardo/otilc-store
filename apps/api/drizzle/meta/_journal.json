@@ -36,6 +36,13 @@
       "when": 1793213624767,
       "tag": "0004_pix_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793220996033,
+      "tag": "0005_reconciliation_alerts",
+      "breakpoints": true
     }
   ]
 }
