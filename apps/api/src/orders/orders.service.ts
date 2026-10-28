@@ -139,19 +139,25 @@ export class OrdersService {
     };
   }
 
+  /** Como `expireDue`, devolvendo só quantos pedidos expiraram. */
+  async releaseExpired(now = new Date()): Promise<number> {
+    return (await this.expireDue(now)).length;
+  }
+
   /**
-   * Libera o estoque de pedidos que passaram do prazo sem pagamento.
+   * Libera o estoque de pedidos que passaram do prazo sem pagamento e devolve os ids deles, já
+   * com a transação commitada (o job de expiração cancela o Pix deles depois, fora dela).
    * `FOR UPDATE SKIP LOCKED` deixa várias instâncias da API rodarem isso ao mesmo tempo
    * sem processar o mesmo pedido duas vezes. Trava os pedidos antes das variações, como o painel.
    */
-  async releaseExpired(now = new Date()): Promise<number> {
+  async expireDue(now = new Date()): Promise<string[]> {
     return this.db.transaction(async (tx) => {
       const expired = await tx
         .select({ id: orders.id })
         .from(orders)
         .where(and(eq(orders.status, 'PENDING_PAYMENT'), lt(orders.expiresAt, now)))
         .for('update', { skipLocked: true });
-      if (expired.length === 0) return 0;
+      if (expired.length === 0) return [];
 
       const ids = expired.map((o) => o.id);
       const rows = await tx
@@ -170,7 +176,7 @@ export class OrdersService {
       await tx.update(orders).set({ status: 'EXPIRED' }).where(inArray(orders.id, ids));
 
       this.logger.log(`${ids.length} pedido(s) expirado(s); estoque liberado.`);
-      return ids.length;
+      return ids;
     });
   }
 }
