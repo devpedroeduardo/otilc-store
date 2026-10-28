@@ -120,11 +120,13 @@ O CI roda formatação, tipos, testes unitários, testes de integração com um 
 - [x] Carrinho e criação de pedido com reserva de estoque à prova de concorrência
 - [x] Expiração de pedidos não pagos
 - [ ] Pagamento por Pix com Mercado Pago (sandbox), com webhook verificado por assinatura e idempotente
-- [ ] Painel administrativo: produtos, fotos, estoque por variação e pedidos
-- [ ] Login de administrador com cookie httpOnly e permissões por papel
+- [x] Painel administrativo: produtos, fotos, estoque por variação e pedidos
+- [x] Login de administrador com cookie httpOnly e permissões por papel
 - [ ] E-mail de confirmação do pedido
-- [ ] Testes E2E do fluxo de compra com Playwright
-- [ ] Deploy: loja na Vercel, API no Render e banco no Neon
+- [x] Testes E2E do fluxo de compra com Playwright
+- [ ] Deploy: loja na Vercel, API no Render e banco no Supabase
+
+O banco de produção é Supabase (us-east-1), com RLS habilitado em todas as tabelas do `public` e sem policies: a Data API do Supabase (roles `anon` e `authenticated`) não lê nem escreve nada, e a API NestJS, única porta do banco, segue funcionando igual. Detalhes na [spec-010](specs/010-rls-supabase.md).
 
 ## Licença
 
