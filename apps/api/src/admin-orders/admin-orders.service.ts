@@ -1,12 +1,5 @@
-import {
-  ConflictException,
-  Inject,
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
-import { and, asc, count, desc, eq, gte, sql, type SQL } from 'drizzle-orm';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
 import {
   canTransitionOrder,
   type AdminOrderDetailDto,
@@ -17,37 +10,10 @@ import {
 } from '@otilc/shared';
 import { DB, type Database } from '../db/client';
 import { orderItems, orders, variants } from '../db/schema';
-import { lockOrder } from '../orders/lock-order';
-
-type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
-
-/**
- * Efeito de cada transição no estoque da variação (docs/api/admin.md). `guard` é a condição
- * que precisa valer na linha para o ajuste ser coerente; se não valer, o banco está inconsistente.
- */
-type StockEffect = (quantity: number) => {
-  set: { stock?: SQL; reserved?: SQL };
-  guard?: SQL;
-};
-const stockEffects: Partial<Record<`${OrderStatus}>${OrderStatus}`, StockEffect>> = {
-  // A unidade é vendida: sai da reserva e do estoque.
-  'PENDING_PAYMENT>PAID': (q) => ({
-    set: { reserved: sql`${variants.reserved} - ${q}`, stock: sql`${variants.stock} - ${q}` },
-    guard: gte(variants.reserved, q),
-  }),
-  // Volta a ficar disponível.
-  'PENDING_PAYMENT>CANCELED': (q) => ({
-    set: { reserved: sql`${variants.reserved} - ${q}` },
-    guard: gte(variants.reserved, q),
-  }),
-  // A peça volta ao estoque. O dinheiro não: o estorno é manual, fora da loja.
-  'PAID>CANCELED': (q) => ({ set: { stock: sql`${variants.stock} + ${q}` } }),
-};
+import { applyStockEffect, stockEffects, type Tx } from '../orders/order-stock';
 
 @Injectable()
 export class AdminOrdersService {
-  private readonly logger = new Logger(AdminOrdersService.name);
-
   constructor(@Inject(DB) private readonly db: Database) {}
 
   /** Pedidos do mais novo para o mais antigo, com filtro opcional de status. */
@@ -133,25 +99,8 @@ export class AdminOrdersService {
       }
 
       const effect = stockEffects[`${from}>${to}`];
-      if (effect) {
-        const rows = await tx
-          .select({ variantId: orderItems.variantId, quantity: orderItems.quantity })
-          .from(orderItems)
-          .where(eq(orderItems.orderId, id));
-        // Mesma ordem de trava do checkout e do job de expiração (evita deadlock).
-        for (const item of lockOrder(rows)) {
-          const { set, guard } = effect(item.quantity);
-          const adjusted = await tx
-            .update(variants)
-            .set(set)
-            .where(and(eq(variants.id, item.variantId), guard))
-            .returning({ id: variants.id });
-          if (adjusted.length === 0) {
-            this.logger.error(`Reserva inconsistente no pedido ${id}, variação ${item.variantId}.`);
-            throw new InternalServerErrorException('Não foi possível ajustar o estoque do pedido.');
-          }
-        }
-      }
+      // Mesma ordem de trava do checkout e do job de expiração (evita deadlock).
+      if (effect) await applyStockEffect(tx, id, effect);
 
       return this.detail(tx, id);
     });
