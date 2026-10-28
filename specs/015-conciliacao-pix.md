@@ -36,7 +36,8 @@ A API confere sozinha, a cada 5 minutos, os pagamentos Pix com o Mercado Pago (M
 ### 2. Estorno ou contestação depois de pago (3e)
 
 - Novo valor `PAYMENT_REVERSED` no enum `payment_alert` (migração `0005_*`, gerada pelo drizzle-kit).
-- Pagamento local `APPROVED` cujo status remoto é `refunded`, `charged_back` ou `in_mediation`: grava `alert = 'PAYMENT_REVERSED'` e, para `refunded`, `payments.status = 'REFUNDED'`. O pedido **não** muda. Se já havia outro alerta, o novo prevalece e o anterior vai para o log.
+- **Decisão do Pedro (2026-10-28): os alertas se acumulam, nenhum substitui outro.** Um pagamento pode terminar com mais de um alerta, e todos ficam no banco como histórico para o painel da spec-016. Recomendação de modelagem: tabela nova `payment_alerts` (`id`, `payment_id` com FK para `payments`, `alert`, `created_at` com timezone), `UNIQUE (payment_id, alert)` para a idempotência, RLS habilitado como nas outras tabelas, e a migração copia os `payments.alert` existentes para ela. O `sync()` grava todo alerta novo nessa tabela com `ON CONFLICT DO NOTHING`. A coluna `payments.alert` não é apagada nesta spec e nunca é sobrescrita. Se a modelagem exigir mudar uma restrição `UNIQUE` existente, esta spec autoriza; justifique no PR.
+- Pagamento local `APPROVED` cujo status remoto é `refunded`, `charged_back` ou `in_mediation`: grava `alert = 'PAYMENT_REVERSED'` e, para `refunded`, `payments.status = 'REFUNDED'`. O pedido **não** muda. Um alerta anterior do mesmo pagamento (por exemplo `PAID_AFTER_EXPIRY`) continua gravado ao lado do `PAYMENT_REVERSED`.
 - Isso vale para qualquer origem do `sync()` (conciliação, webhook ou verificação sob demanda), e é idempotente: repetir a mesma notificação não gera log nem escrita novos.
 
 ### 3. Cancelar o Pix no MP quando o pedido expira (Q4)
@@ -63,7 +64,8 @@ A API confere sozinha, a cada 5 minutos, os pagamentos Pix com o Mercado Pago (M
 Somente estes caminhos podem ser criados ou alterados:
 
 - `apps/api/src/db/schema.ts` (valor novo do enum e índice, se houver)
-- `apps/api/drizzle/0005_*.sql`, `apps/api/drizzle/meta/0005_snapshot.json`, `apps/api/drizzle/meta/_journal.json` (só a entrada nova, gerados pelo drizzle-kit)
+- `apps/api/drizzle/0005_*.sql`, `apps/api/drizzle/meta/0005_snapshot.json`, `apps/api/drizzle/meta/_journal.json` (só a entrada nova, gerados pelo drizzle-kit; a cópia dos alertas existentes pode ser SQL acrescentado à `0005` antes do merge)
+- `apps/api/test/rls.e2e-spec.ts` (só para incluir a tabela nova de alertas, se o teste listar as tabelas)
 - `apps/api/src/payments/**`
 - `apps/api/src/orders/orders.service.ts`, `apps/api/src/orders/order-expiration.service.ts`, `apps/api/src/orders/orders.module.ts` (só para devolver os pedidos expirados e disparar o cancelamento; `lock-order.ts` e `order-stock.ts` sem mudança)
 - `apps/api/src/config/env.ts`, `apps/api/src/config/env.spec.ts`, `apps/api/.env.example`
@@ -91,6 +93,8 @@ Somente estes caminhos podem ser criados ou alterados:
 - [ ] Erro do MP num pagamento não interrompe a rodada; os outros são conciliados (e2e).
 - [ ] Rodar a mesma rodada duas vezes não muda nada na segunda (idempotência, e2e).
 - [ ] `PAYMENT_REVERSED`: pagamento `APPROVED` com MP `refunded`, `charged_back` ou `in_mediation` grava o alerta, `refunded` vira `REFUNDED`, e o pedido não muda (e2e).
+- [ ] Alertas acumulados (decisão do Pedro, e2e): pagamento que recebeu `PAID_AFTER_EXPIRY` e depois é estornado no MP termina com os dois alertas no banco; repetir a notificação do estorno não duplica nenhum deles.
+- [ ] A migração copia os alertas já existentes em `payments.alert` para o histórico, e a tabela nova tem RLS habilitado (e2e).
 - [ ] Expiração (e2e): pedido expirado com Pix pendente tem `cancelPayment` chamado depois do commit e o pagamento fica `CANCELLED`; falha no cancelamento não impede a devolução do estoque; MP respondendo `approved` no cancelamento resulta em `PAID_AFTER_EXPIRY`.
 - [ ] `cancelPayment` (unit): método, caminho e corpo corretos, timeout, resposta validada com Zod.
 - [ ] Aprovação sem `date_approved` usa `date_last_updated` e, sem os dois, `now()`, com `warn` no log (unit ou e2e).
@@ -108,5 +112,5 @@ Somente estes caminhos podem ser criados ou alterados:
 - Nenhuma chamada ao MP com transação ou trava aberta (conciliação e cancelamento).
 - A reivindicação com `SKIP LOCKED` + `last_checked_at` é o que impede duas instâncias de processar o mesmo pagamento. Confira o teste de concorrência.
 - `releaseExpired()` mudou de assinatura: confira que a devolução de estoque e a ordem das travas são as mesmas (spec-008).
-- `PAYMENT_REVERSED` sobrescreve um alerta anterior: confira que o anterior vai para o log.
+- Alertas se acumulam (decisão do Pedro): confira que nenhum caminho apaga ou sobrescreve um alerta e que a idempotência vem do `UNIQUE (payment_id, alert)`.
 - Limite do webhook: 600/min por IP é folga para rajadas do MP, não ausência de limite. A assinatura continua barrando requisições forjadas.
