@@ -387,6 +387,27 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
 
       expect(getSpy).not.toHaveBeenCalled();
       expect(await orderStatus(order.id)).toBe('PENDING_PAYMENT');
+      expect(await notificationCount()).toBe(0);
+    });
+
+    it('notificação de pagamento desconhecido não é registrada; a mesma, depois da cobrança gravada, é processada', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const order = await placeOrder([{ variantId: v.id, quantity: 1 }]);
+      // O provedor simulado numera os pagamentos a partir de 1000000 em cada teste.
+      const early = '1000000';
+      const requestId = randomUUID();
+
+      await webhook(early, { requestId }).expect(200);
+      expect(await notificationCount()).toBe(0);
+
+      await createPix(order.id).expect(201);
+      expect((await paymentOf(order.id)).providerPaymentId).toBe(early);
+      approve(early);
+      await webhook(early, { requestId }).expect(200);
+
+      expect(await orderStatus(order.id)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      expect(await notificationCount()).toBe(1);
     });
 
     it('aprovado para pedido já EXPIRED → continua EXPIRED, estoque intacto, alerta PAID_AFTER_EXPIRY', async () => {

@@ -50,9 +50,8 @@ export class PaymentTransitionService {
       columns: { id: true, orderId: true },
     });
     if (!local) {
-      // Pagamento que não é da loja (ou notificação que chegou antes de a cobrança ser gravada:
-      // a próxima notificação ou a página do pedido cobrem esse caso).
-      if (requestId) await this.recordNotification(this.db, requestId, providerPaymentId);
+      // Pagamento que não é da loja, ou notificação que chegou antes de a cobrança ser gravada.
+      // Nada é registrado: o reenvio do mesmo `x-request-id` ainda pode ser processado.
       this.logger.warn(`Notificação de pagamento desconhecido ${providerPaymentId}; ignorada.`);
       return 'unknown_payment';
     }
