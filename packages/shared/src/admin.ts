@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { integer } from './zod-compat';
 import {
   conditionSchema,
   productStatusSchema,
@@ -68,7 +69,7 @@ export const adminProductInputSchema = z.object({
   brand: z.string().trim().min(1).max(120).nullable().optional(),
   description: z.string().trim().min(1).max(5000).nullable().optional(),
   note: z.string().trim().min(1).max(240).nullable().optional(),
-  priceCents: z.number().int().positive().max(100_000_000),
+  priceCents: z.number().check(integer).positive().max(100_000_000),
   condition: conditionSchema,
   status: productStatusSchema,
   featured: z.boolean(),
@@ -93,13 +94,13 @@ export const adminVariantInputSchema = z.object({
     .max(64),
   size: z.string().trim().min(1).max(20),
   color: z.string().trim().min(1).max(40).nullable().optional(),
-  stock: z.number().int().min(0).max(100_000),
+  stock: z.number().check(integer).min(0).max(100_000),
 });
 export type AdminVariantInput = z.infer<typeof adminVariantInputSchema>;
 
 /** Novo estoque total da variação. A API recusa (409) se ficar abaixo do reservado. */
 export const adminStockUpdateSchema = z.object({
-  stock: z.number().int().min(0).max(100_000),
+  stock: z.number().check(integer).min(0).max(100_000),
 });
 export type AdminStockUpdate = z.infer<typeof adminStockUpdateSchema>;
 
@@ -146,8 +147,8 @@ export const orderStatusSchema = z.enum([
 /** Filtros da listagem de pedidos do painel (query string). */
 export const adminOrderQuerySchema = z.object({
   status: orderStatusSchema.optional(),
-  pagina: z.coerce.number().int().min(1).max(500).default(1),
-  porPagina: z.coerce.number().int().min(1).max(100).default(20),
+  pagina: z.coerce.number().check(integer).min(1).max(500).default(1),
+  porPagina: z.coerce.number().check(integer).min(1).max(100).default(20),
 });
 export type AdminOrderQuery = z.infer<typeof adminOrderQuerySchema>;
 
