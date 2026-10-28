@@ -93,6 +93,7 @@ Forja:
 - `apps/api/src/orders/**` (só para expor ou reutilizar a transição; `lock-order.ts` sem mudança de comportamento)
 - `apps/api/src/admin-orders/admin-orders.service.ts` (só para extrair a lógica de `PAID` para reuso, sem mudar comportamento)
 - `apps/api/src/app.module.ts`, `apps/api/src/config/env.ts`, `apps/api/.env.example`
+- `apps/api/src/config/env.spec.ts` (novo, teste unitário de env.ts; autorizado pela Bússola em 2026-10-28)
 - `apps/api/test/payments.e2e-spec.ts` (novo), `apps/api/test/**` helpers novos se precisar
 - `apps/api/test/admin-catalog.e2e-spec.ts` (só a linha do TRUNCATE, autorizado pela Bússola em 2026-10-28)
 - `specs/014-pix-mercado-pago.md` (esta spec), `docs/agents/scorecard*` (registro no fechamento)
@@ -141,6 +142,8 @@ API (`apps/api/test/payments.e2e-spec.ts`, Postgres real, cliente do Mercado Pag
 - [ ] `GET /pix` com cobrança pendente consulta o provedor no máximo uma vez a cada 20 s por pedido, inclusive com chamadas simultâneas; aprovado na consulta → `PAID`
 - [ ] Falha do provedor no `GET /pix` → `200` com o estado do banco
 - [ ] Testes unitários da verificação de assinatura (válida, inválida, tamanhos diferentes, `ts` fora da janela)
+- [ ] Assinatura aceita ts em milissegundos (13 dígitos) e em segundos; o texto assinado usa o ts cru
+- [ ] Pix aprovado para pedido já PAID ou SHIPPED → `alert = DUPLICATE_PAYMENT`, pedido e estoque intactos
 - [ ] Nenhum teste existente foi removido ou enfraquecido; `orders.e2e-spec.ts` e `admin-orders.e2e-spec.ts` passam sem alteração
 
 Web:
