@@ -94,6 +94,7 @@ Forja:
 - `apps/api/src/admin-orders/admin-orders.service.ts` (só para extrair a lógica de `PAID` para reuso, sem mudar comportamento)
 - `apps/api/src/app.module.ts`, `apps/api/src/config/env.ts`, `apps/api/.env.example`
 - `apps/api/test/payments.e2e-spec.ts` (novo), `apps/api/test/**` helpers novos se precisar
+- `apps/api/test/admin-catalog.e2e-spec.ts` (só a linha do TRUNCATE, autorizado pela Bússola em 2026-10-28)
 - `specs/014-pix-mercado-pago.md` (esta spec), `docs/agents/scorecard*` (registro no fechamento)
 
 Faísca:
