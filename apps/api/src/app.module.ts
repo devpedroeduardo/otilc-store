@@ -9,6 +9,7 @@ import { ENV, type Env } from './config/env';
 import { DatabaseModule } from './db/database.module';
 import { HealthController } from './health/health.controller';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({})
 export class AppModule {
@@ -30,6 +31,7 @@ export class AppModule {
         AdminAuthModule,
         AdminCatalogModule,
         AdminOrdersModule,
+        PaymentsModule,
       ],
       controllers: [HealthController],
       providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
