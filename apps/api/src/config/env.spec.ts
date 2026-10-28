@@ -14,6 +14,18 @@ describe('loadEnv', () => {
     const env = loadEnv({ DATABASE_URL });
     expect(env.PORT).toBe(3333);
     expect(env.ORDER_HOLD_MINUTES).toBe(30);
+    expect(env.PAYMENT_RECONCILIATION_INTERVAL_MS).toBe(300_000);
+  });
+
+  it('intervalo da conciliação: inteiro entre 30 s e 1 h', () => {
+    expect(loadEnv({ DATABASE_URL, PAYMENT_RECONCILIATION_INTERVAL_MS: '60000' })).toMatchObject({
+      PAYMENT_RECONCILIATION_INTERVAL_MS: 60_000,
+    });
+    for (const bad of ['0', '29999', '3600001', '60000.5', 'abc']) {
+      expect(() => loadEnv({ DATABASE_URL, PAYMENT_RECONCILIATION_INTERVAL_MS: bad })).toThrow(
+        /PAYMENT_RECONCILIATION_INTERVAL_MS/,
+      );
+    }
   });
 
   it('não sobe sem DATABASE_URL', () => {

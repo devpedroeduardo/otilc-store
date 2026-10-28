@@ -3,6 +3,7 @@ import { ENV, pixConfig, type Env } from '../config/env';
 import { MercadoPagoClient, PIX_PROVIDER, type PixProvider } from './mercadopago.client';
 import { MercadoPagoWebhookController } from './mercadopago-webhook.controller';
 import { MercadoPagoWebhookService } from './mercadopago-webhook.service';
+import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentTransitionService } from './payment-transition.service';
 import { PixController } from './pix.controller';
 import { PixService } from './pix.service';
@@ -22,6 +23,9 @@ import { PixService } from './pix.service';
     PaymentTransitionService,
     PixService,
     MercadoPagoWebhookService,
+    PaymentReconciliationService,
   ],
+  // O job de expiração de pedidos cancela no Mercado Pago o Pix dos pedidos que expirou.
+  exports: [PaymentReconciliationService],
 })
 export class PaymentsModule {}
