@@ -1,7 +1,7 @@
 # API do painel administrativo
 
 Contrato dos endpoints `/api/admin/**`. Decisões de autenticação em [ADR 0002](../adr/0002-autenticacao-admin.md).
-Schemas e DTOs citados aqui estão em [`packages/shared/src/admin.ts`](../../packages/shared/src/admin.ts).
+Schemas e DTOs citados aqui estão em [`packages/shared/src/admin.ts`](../../packages/shared/src/admin.ts) e, os de alertas, em [`packages/shared/src/alerts.ts`](../../packages/shared/src/alerts.ts).
 
 ## Regras gerais
 
@@ -57,20 +57,23 @@ Comuns a todas as rotas autenticadas: `401` sem sessão válida, `403` por papel
 
 ## Endpoints
 
-| Método   | Rota                               | Papel mínimo | Ação                 | Corpo / query                  | Sucesso                                  | Erros                             |
-| -------- | ---------------------------------- | ------------ | -------------------- | ------------------------------ | ---------------------------------------- | --------------------------------- |
-| `POST`   | `/api/admin/session`               | público      | —                    | `adminLoginSchema`             | `200` `AdminUserDto` + cookie            | 400, 401, 403, 429                |
-| `DELETE` | `/api/admin/session`               | STAFF        | —                    | —                              | `204` + cookie limpo                     | 401, 403                          |
-| `GET`    | `/api/admin/me`                    | STAFF        | —                    | —                              | `200` `AdminUserDto`                     | 401                               |
-| `GET`    | `/api/admin/products`              | STAFF        | `product:read`       | —                              | `200` `AdminProductDto[]`                | 401, 403                          |
-| `GET`    | `/api/admin/products/:id`          | STAFF        | `product:read`       | —                              | `200` `AdminProductDto`                  | 400, 401, 403, 404                |
-| `POST`   | `/api/admin/products`              | OWNER        | `product:create`     | `adminProductInputSchema`      | `201` `AdminProductDto`                  | 400, 401, 403, 409, 422           |
-| `PATCH`  | `/api/admin/products/:id`          | OWNER        | `product:update`     | `adminProductPatchSchema`      | `200` `AdminProductDto`                  | 400, 401, 403, 404, 409, 422      |
-| `POST`   | `/api/admin/products/:id/variants` | OWNER        | `variant:create`     | `adminVariantInputSchema`      | `201` `AdminVariantDto`                  | 400, 401, 403, 404, 409           |
-| `PUT`    | `/api/admin/variants/:id/stock`    | STAFF        | `stock:update`       | `adminStockUpdateSchema`       | `200` `AdminVariantDto`                  | 400, 401, 403, 404, 409           |
-| `GET`    | `/api/admin/orders`                | STAFF        | `order:read`         | query `adminOrderQuerySchema`  | `200` `Paginated<AdminOrderListItemDto>` | 400, 401, 403                     |
-| `GET`    | `/api/admin/orders/:id`            | STAFF        | `order:read`         | —                              | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404                |
-| `PATCH`  | `/api/admin/orders/:id/status`     | STAFF        | `order:updateStatus` | `adminOrderStatusUpdateSchema` | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404, 409, 502, 503 |
+| Método   | Rota                                          | Papel mínimo | Ação                 | Corpo / query                  | Sucesso                                  | Erros                             |
+| -------- | --------------------------------------------- | ------------ | -------------------- | ------------------------------ | ---------------------------------------- | --------------------------------- |
+| `POST`   | `/api/admin/session`                          | público      | —                    | `adminLoginSchema`             | `200` `AdminUserDto` + cookie            | 400, 401, 403, 429                |
+| `DELETE` | `/api/admin/session`                          | STAFF        | —                    | —                              | `204` + cookie limpo                     | 401, 403                          |
+| `GET`    | `/api/admin/me`                               | STAFF        | —                    | —                              | `200` `AdminUserDto`                     | 401                               |
+| `GET`    | `/api/admin/products`                         | STAFF        | `product:read`       | —                              | `200` `AdminProductDto[]`                | 401, 403                          |
+| `GET`    | `/api/admin/products/:id`                     | STAFF        | `product:read`       | —                              | `200` `AdminProductDto`                  | 400, 401, 403, 404                |
+| `POST`   | `/api/admin/products`                         | OWNER        | `product:create`     | `adminProductInputSchema`      | `201` `AdminProductDto`                  | 400, 401, 403, 409, 422           |
+| `PATCH`  | `/api/admin/products/:id`                     | OWNER        | `product:update`     | `adminProductPatchSchema`      | `200` `AdminProductDto`                  | 400, 401, 403, 404, 409, 422      |
+| `POST`   | `/api/admin/products/:id/variants`            | OWNER        | `variant:create`     | `adminVariantInputSchema`      | `201` `AdminVariantDto`                  | 400, 401, 403, 404, 409           |
+| `PUT`    | `/api/admin/variants/:id/stock`               | STAFF        | `stock:update`       | `adminStockUpdateSchema`       | `200` `AdminVariantDto`                  | 400, 401, 403, 404, 409           |
+| `GET`    | `/api/admin/orders`                           | STAFF        | `order:read`         | query `adminOrderQuerySchema`  | `200` `Paginated<AdminOrderListItemDto>` | 400, 401, 403                     |
+| `GET`    | `/api/admin/orders/:id`                       | STAFF        | `order:read`         | —                              | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404                |
+| `PATCH`  | `/api/admin/orders/:id/status`                | STAFF        | `order:updateStatus` | `adminOrderStatusUpdateSchema` | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404, 409, 502, 503 |
+| `GET`    | `/api/admin/alerts`                           | STAFF        | `order:read`         | query `adminAlertQuerySchema`  | `200` `Paginated<AdminAlertDto>`         | 400, 401, 403                     |
+| `POST`   | `/api/admin/alerts/:id/resolve`               | STAFF        | `order:updateStatus` | —                              | `200` `AdminAlertDto`                    | 400, 401, 403, 404, 409           |
+| `POST`   | `/api/admin/alerts/:id/resume-reconciliation` | STAFF        | `order:updateStatus` | —                              | `200` `AdminAlertDto`                    | 400, 401, 403, 404, 409           |
 
 ## Detalhes por endpoint
 
@@ -294,3 +297,69 @@ Saindo de `PENDING_PAYMENT` (para `PAID` ou `CANCELED`), se o pedido tem um Pix 
 ```
 
 `PAID → SHIPPED` e `PAID → CANCELED` não chamam o Mercado Pago (não há Pix pendente; estorno é manual).
+
+## Alertas de pagamento ([spec-018](../../specs/018-painel-alertas.md))
+
+Os alertas de `payment_alerts` (tipos e origem em [pagamentos.md](pagamentos.md#alertas)) com o pagamento e o pedido de cada um. Mesmas ações dos pedidos: ver exige `order:read`; resolver e retomar, `order:updateStatus` (OWNER e STAFF). O painel mostra o título e o "o que fazer" de cada tipo pelo mapa `alertGuide` do shared; um tipo sem entrada no mapa cai num texto genérico.
+
+### `GET /api/admin/alerts`
+
+Query: `situacao` (`abertos`, padrão; `resolvidos`; `todos`), `tipo` (opcional, um dos 5 de `paymentAlertTypeSchema`), `pagina` (padrão 1, de 1 a 500), `porPagina` (padrão 20, de 1 a 100). Do mais novo para o mais antigo (`created_at desc`). O número de abertos para o menu é o `total` de `?porPagina=1`.
+
+`GET /api/admin/alerts?situacao=todos&porPagina=1`:
+
+```json
+{
+  "items": [
+    {
+      "id": "3c1f…",
+      "type": "RECONCILIATION_STOPPED",
+      "createdAt": "2026-10-29T15:00:00.000Z",
+      "resolvedAt": "2026-10-29T16:10:00.000Z",
+      "resolvedBy": "Dono",
+      "payment": {
+        "id": "b51e…",
+        "providerPaymentId": "1234567890",
+        "status": "PENDING",
+        "amountCents": 25980
+      },
+      "order": { "id": "e7a0…", "number": 42, "status": "PENDING_PAYMENT" }
+    }
+  ],
+  "page": 1,
+  "perPage": 1,
+  "total": 3,
+  "totalPages": 3
+}
+```
+
+`resolvedBy` é o nome do admin que resolveu, ou `null` se o alerta está aberto ou o admin foi removido (`ON DELETE SET NULL`: a data da resolução fica). Nenhum dado do cliente além do que a lista de pedidos já mostra.
+
+### `POST /api/admin/alerts/:id/resolve`
+
+Sem corpo. Marca o alerta como resolvido pelo admin da sessão e devolve `200` com o `AdminAlertDto`. Não muda pagamento, pedido, estoque nem `payments.alert`, e **não** retoma a conciliação.
+
+O `UPDATE … WHERE resolved_at IS NULL` é a garantia contra corrida: de dois resolves simultâneos, um recebe `200` e o outro `409`, com um só autor gravado.
+
+```json
+{
+  "statusCode": 409,
+  "code": "ALERT_ALREADY_RESOLVED",
+  "message": "Este alerta já foi marcado como resolvido.",
+  "error": "Conflict"
+}
+```
+
+Não há "reabrir" manual. Um alerta `RECONCILIATION_STOPPED` resolvido volta a abrir sozinho se a conciliação parar de novo no mesmo pagamento (ver [pagamentos.md](pagamentos.md#alertas)).
+
+### `POST /api/admin/alerts/:id/resume-reconciliation`
+
+Sem corpo. Só para alerta `RECONCILIATION_STOPPED` cujo pagamento esteja no teto de falhas (`check_failures >= 8`, `RECONCILIATION_MAX_FAILURES`): zera `check_failures` e `next_check_at`, e mais nada. Não consulta o Mercado Pago, não muda status de pagamento, pedido ou estoque e **não** resolve o alerta. A próxima rodada da conciliação volta a consultar o pagamento, se ele ainda estiver na janela dela (`PENDING` de até 24 h, `APPROVED` de até 7 dias). `200` com o `AdminAlertDto`.
+
+| Situação                                                                             | Resposta | `code`                       |
+| ------------------------------------------------------------------------------------ | -------- | ---------------------------- |
+| Alerta de outro tipo                                                                 | `409`    | `ALERT_NOT_RESUMABLE`        |
+| Pagamento fora do teto (já retomado, ou o Mercado Pago respondeu e zerou o contador) | `409`    | `RECONCILIATION_NOT_STOPPED` |
+| Alerta inexistente                                                                   | `404`    | —                            |
+
+O `UPDATE` só pega pagamento ainda no teto, então retomar duas vezes (ou junto com um webhook) zera uma vez só. No teto a conciliação não reivindica o pagamento, então não há consulta em andamento para invalidar.

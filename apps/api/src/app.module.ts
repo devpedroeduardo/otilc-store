@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AdminAuthModule } from './admin-auth/admin-auth.module';
 import { AdminCatalogModule } from './admin-catalog/admin-catalog.module';
+import { AdminAlertsModule } from './admin-alerts/admin-alerts.module';
 import { AdminOrdersModule } from './admin-orders/admin-orders.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ENV, type Env } from './config/env';
@@ -31,6 +32,7 @@ export class AppModule {
         AdminAuthModule,
         AdminCatalogModule,
         AdminOrdersModule,
+        AdminAlertsModule,
         PaymentsModule,
       ],
       controllers: [HealthController],

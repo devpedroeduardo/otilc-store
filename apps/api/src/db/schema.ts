@@ -264,7 +264,8 @@ export const paymentNotifications = pgTable('payment_notifications', {
 
 /**
  * Histórico de alertas dos pagamentos (spec-015): eles se acumulam, nenhum substitui outro.
- * `UNIQUE (payment_id, alert)` torna a gravação idempotente (`ON CONFLICT DO NOTHING`).
+ * `UNIQUE (payment_id, alert)` torna a gravação idempotente. O admin marca um alerta como
+ * resolvido no painel (spec-018); se o mesmo alerta se repete depois, ele é reaberto.
  */
 export const paymentAlerts = pgTable(
   'payment_alerts',
@@ -275,8 +276,21 @@ export const paymentAlerts = pgTable(
       .references(() => payments.id),
     alert: paymentAlert('alert').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    // Quem resolveu; fica nulo se o admin for removido (a data da resolução continua).
+    resolvedBy: uuid('resolved_by').references(() => adminUsers.id, { onDelete: 'set null' }),
   },
-  (t) => [unique('payment_alerts_payment_alert_unique').on(t.paymentId, t.alert)],
+  (t) => [
+    unique('payment_alerts_payment_alert_unique').on(t.paymentId, t.alert),
+    // Lista de abertos do painel, do mais novo para o mais antigo.
+    index('payment_alerts_open_created_idx')
+      .on(t.createdAt)
+      .where(sql`${t.resolvedAt} IS NULL`),
+    check(
+      'payment_alerts_resolved_by_needs_resolved_at',
+      sql`${t.resolvedBy} IS NULL OR ${t.resolvedAt} IS NOT NULL`,
+    ),
+  ],
 ).enableRLS();
 
 export const categoriesRelations = relations(categories, ({ many }) => ({

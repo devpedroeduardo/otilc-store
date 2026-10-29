@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { AdminUserDto } from '@otilc/shared';
 import { adminApi } from '@/lib/admin-api';
-export function AdminNav({ user }: { user: AdminUserDto }) {
+export function AdminNav({ user, openAlerts }: { user: AdminUserDto; openAlerts?: number }) {
   const router = useRouter();
   const [error, setError] = useState('');
   async function logout() {
@@ -25,6 +25,9 @@ export function AdminNav({ user }: { user: AdminUserDto }) {
         <div className="admin-links">
           <Link href="/admin">Produtos</Link>
           <Link href="/admin/orders">Pedidos</Link>
+          <Link href="/admin/alerts">
+            Alertas{openAlerts === undefined ? '' : ` (${openAlerts})`}
+          </Link>
           <span className="muted">
             {user.name} · {user.role}
           </span>

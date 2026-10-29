@@ -203,12 +203,17 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
           )
           .returning({ nextCheckAt: payments.nextCheckAt });
         if (row && stopped) {
-          await this.transition.recordAlert(tx, {
-            paymentId: id,
-            providerPaymentId,
-            orderId,
-            alert: 'RECONCILIATION_STOPPED',
-          });
+          // Parou de novo depois de retomada: o alerta já resolvido volta a abrir (spec-018).
+          await this.transition.recordAlert(
+            tx,
+            {
+              paymentId: id,
+              providerPaymentId,
+              orderId,
+              alert: 'RECONCILIATION_STOPPED',
+            },
+            { reopen: true },
+          );
         }
         return row;
       });

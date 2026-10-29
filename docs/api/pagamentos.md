@@ -143,7 +143,7 @@ Reprocessar um pagamento já aprovado não faz nada. A transação trava o pedid
 
 ### Alertas
 
-Os alertas não aparecem na API pública nem no painel nesta versão (o painel é a spec-016); ficam no banco e no log:
+Os alertas não aparecem na API pública; ficam no banco, no log e no painel de alertas do admin (`/admin/alerts`, rotas em [admin.md](admin.md#alertas-de-pagamento-spec-018)):
 
 | Alerta                   | Quando                                                                                                                   |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
@@ -155,6 +155,8 @@ Os alertas não aparecem na API pública nem no painel nesta versão (o painel �
 
 - **Os alertas se acumulam** (decisão do Pedro na spec-015): a tabela `payment_alerts` guarda todos os alertas de cada pagamento, com data, e nenhum apaga ou substitui outro. Exemplo: um Pix pago depois do prazo e depois estornado termina com `PAID_AFTER_EXPIRY` e `PAYMENT_REVERSED`.
 - Cada tipo de alerta aparece no máximo uma vez por pagamento (`UNIQUE (payment_id, alert)`): repetir a mesma notificação não grava nem registra nada de novo.
+- **Resolução** (spec-018): o admin marca o alerta como resolvido no painel (`resolved_at`, `resolved_by`); o alerta continua no histórico. Resolver não muda pagamento, pedido nem `payments.alert`.
+- **Reabertura**: só `RECONCILIATION_STOPPED`. Se a conciliação parar de novo num pagamento cujo alerta já foi resolvido (retomada e mais 8 falhas), o mesmo alerta volta a abrir, com `created_at` novo e novo aviso no log; aberto, segue intacto. Os demais tipos não reabrem: `PAYMENT_REVERSED` é regravado em toda sincronização de um `charged_back`/`in_mediation` (o pagamento local segue `APPROVED`) e reabriria sempre, e os outros só nascem na primeira aprovação.
 - `payments.alert` guarda só o primeiro alerta do pagamento e nunca é sobrescrita.
 - Todo alerta novo gera um aviso (`warn`) no log com o id do pagamento, o id do pedido e o alerta, sem dados do cliente.
 - O estorno ao cliente continua manual, no painel do Mercado Pago.
@@ -172,7 +174,7 @@ A API confere sozinha os pagamentos com o Mercado Pago, para corrigir o que o we
 - **Sem trava aberta**: a consulta ao Mercado Pago só acontece depois de a reivindicação terminar; a mudança de estado é a mesma transição do webhook (tabela acima).
 - **Falha** (erro, tempo esgotado ou pagamento não encontrado no Mercado Pago; todas contam igual): a rodada segue para o próximo, e um único `UPDATE` (só se ninguém conferiu o pagamento no meio) soma 1 em `payments.check_failures`, agenda a próxima tentativa em `next_check_at` e devolve o `last_checked_at` de antes da reivindicação, então um `APPROVED` não espera as 6 horas, só o backoff. Aviso (`warn`) no log com o id do pagamento, o contador e a próxima tentativa.
 - **Backoff** (spec-020): depois da n-ésima falha seguida, a próxima tentativa fica para daqui a `intervalo × 2^(n−1)`, no máximo 1 hora. No padrão de 5 minutos: 5, 10, 20, 40, 60, 60 e 60 minutos. Um pagamento que falha sempre não volta mais ao topo de toda rodada, então pagamentos quebrados não ocupam o lote dos saudáveis.
-- **Teto**: na **8ª falha seguida** (cerca de 4 h 15 no padrão; 8 consultas em vez de ~288 em 24 h), a conciliação para de consultar o pagamento e grava o alerta `RECONCILIATION_STOPPED` (uma vez só), com um `error` no log. O pagamento continua `PENDING` ou `APPROVED`; pedido e estoque não mudam. Webhook, expiração, verificação sob demanda e cancelamento pelo painel seguem iguais. Retomar a conciliação de um pagamento no teto é da spec-018.
+- **Teto**: na **8ª falha seguida** (cerca de 4 h 15 no padrão; 8 consultas em vez de ~288 em 24 h), a conciliação para de consultar o pagamento e grava o alerta `RECONCILIATION_STOPPED` (uma vez só), com um `error` no log. O pagamento continua `PENDING` ou `APPROVED`; pedido e estoque não mudam. Webhook, expiração, verificação sob demanda e cancelamento pelo painel seguem iguais. Para retomar, o admin usa "Retomar conciliação" no alerta, no painel (`POST /api/admin/alerts/:id/resume-reconciliation`, spec-018): zera `check_failures` e `next_check_at`, sem consultar o Mercado Pago nem resolver o alerta.
 - **Sucesso zera**: qualquer resposta do Mercado Pago que passa pela transição (conciliação, webhook, verificação sob demanda ou resposta do cancelamento) zera `check_failures` e `next_check_at`, inclusive para um pagamento no teto, que volta ao fluxo normal. Zerar vale para **toda** resposta do Mercado Pago que passa pela transição, não só para a da conciliação. O alerta `RECONCILIATION_STOPPED` já gravado fica como histórico. A reivindicação grava `next_check_at = now()` como marca da consulta em andamento; uma resposta aplicada no meio (ex.: webhook) apaga a marca, e uma falha dessa rodada que chegue depois não conta, mesmo com o contador já zerado.
 
 ## Cancelamento do Pix quando o pedido expira

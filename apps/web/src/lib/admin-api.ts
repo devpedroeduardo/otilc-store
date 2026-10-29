@@ -1,4 +1,6 @@
 import type {
+  AdminAlertDto,
+  AdminAlertQuery,
   AdminOrderDetailDto,
   AdminOrderListItemDto,
   AdminProductDto,
@@ -108,4 +110,22 @@ export const adminApi = {
           `/orders/${encodeURIComponent(id)}/status`,
           json('PATCH', { status }),
         ),
+  alerts: (query: Partial<AdminAlertQuery> = {}, cookie?: string) => {
+    if (mock) return mockAdminApi.alerts(query);
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query))
+      if (value !== undefined) params.set(key, String(value));
+    const qs = params.toString();
+    return request<Paginated<AdminAlertDto>>(`/alerts${qs ? `?${qs}` : ''}`, undefined, cookie);
+  },
+  resolveAlert: (id: string) =>
+    mock
+      ? mockAdminApi.resolveAlert(id)
+      : request<AdminAlertDto>(`/alerts/${encodeURIComponent(id)}/resolve`, { method: 'POST' }),
+  resumeReconciliation: (id: string) =>
+    mock
+      ? mockAdminApi.resumeReconciliation(id)
+      : request<AdminAlertDto>(`/alerts/${encodeURIComponent(id)}/resume-reconciliation`, {
+          method: 'POST',
+        }),
 };

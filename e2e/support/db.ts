@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { createDatabase } from '../../apps/api/src/db/client';
-import { orders, products, variants } from '../../apps/api/src/db/schema';
+import { orders, paymentAlerts, payments, products, variants } from '../../apps/api/src/db/schema';
 import { assertE2EDatabaseUrl, E2E_DATABASE_URL } from './env';
 
 /** Leitura direta do banco de teste para conferir o efeito das ações feitas pela tela. */
@@ -46,5 +46,37 @@ export function orderStatus(number: number): Promise<string | undefined> {
       .from(orders)
       .where(eq(orders.number, number));
     return row?.status;
+  });
+}
+
+/** Pagamento Pix pendente com um alerta aberto, semeado direto no banco (a API não os cria sozinha). */
+export function seedAlert(
+  orderId: string,
+  alert: typeof paymentAlerts.$inferInsert.alert,
+  amountCents: number,
+): Promise<void> {
+  return withDb(async (db) => {
+    const [payment] = await db
+      .insert(payments)
+      .values({
+        orderId,
+        providerPaymentId: `e2e-${crypto.randomUUID()}`,
+        status: 'PENDING',
+        amountCents,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      })
+      .returning({ id: payments.id });
+    await db.insert(paymentAlerts).values({ paymentId: payment!.id, alert });
+  });
+}
+
+export function alertResolved(orderId: string): Promise<boolean> {
+  return withDb(async (db) => {
+    const [row] = await db
+      .select({ resolvedAt: paymentAlerts.resolvedAt })
+      .from(paymentAlerts)
+      .innerJoin(payments, eq(payments.id, paymentAlerts.paymentId))
+      .where(eq(payments.orderId, orderId));
+    return row?.resolvedAt != null;
   });
 }
