@@ -44,6 +44,8 @@ export const paymentAlert = pgEnum('payment_alert', [
   'DUPLICATE_PAYMENT',
   // Pago e depois estornado ou contestado no Mercado Pago; o pedido não muda (spec-015).
   'PAYMENT_REVERSED',
+  // A consulta ao Mercado Pago falhou 8 vezes seguidas e a conciliação parou (spec-020).
+  'RECONCILIATION_STOPPED',
 ]);
 
 export const categories = pgTable('categories', {
@@ -227,6 +229,9 @@ export const payments = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     // Última consulta sob demanda ao provedor (limite de frequência por pedido).
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    // Falhas consecutivas da consulta na conciliação e quando ela pode tentar de novo (spec-020).
+    checkFailures: integer('check_failures').notNull().default(0),
+    nextCheckAt: timestamp('next_check_at', { withTimezone: true }),
     // Primeiro alerta do pagamento, nunca sobrescrito; o histórico completo é payment_alerts.
     alert: paymentAlert('alert'),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
@@ -242,6 +247,7 @@ export const payments = pgTable(
     index('payments_status_created_idx').on(t.status, t.createdAt),
     check('payments_provider_valid', sql`${t.provider} = 'mercadopago'`),
     check('payments_amount_positive', sql`${t.amountCents} > 0`),
+    check('payments_check_failures_non_negative', sql`${t.checkFailures} >= 0`),
   ],
 ).enableRLS();
 

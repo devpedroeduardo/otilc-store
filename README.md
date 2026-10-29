@@ -56,7 +56,7 @@ packages/
 
 **Reserva com prazo.** O pedido segura o estoque por 30 minutos (configurável). Um job a cada minuto devolve ao estoque as unidades de pedidos não pagos. Ele usa `FOR UPDATE SKIP LOCKED`, então várias instâncias da API podem rodar ao mesmo tempo sem processar o mesmo pedido duas vezes.
 
-**Pix conferido por três caminhos.** O status do pagamento vem só da API do Mercado Pago, pelo webhook assinado, pela consulta da página do pedido e por uma conciliação a cada 5 minutos que pega o que os dois perderam (inclusive estorno e contestação depois de pago). A conciliação reivindica os pagamentos com `FOR UPDATE SKIP LOCKED` antes de chamar o Mercado Pago, então várias instâncias não consultam o mesmo pagamento, e nenhuma chamada externa acontece com trava aberta. Pix de pedido expirado é cancelado no Mercado Pago.
+**Pix conferido por três caminhos.** O status do pagamento vem só da API do Mercado Pago, pelo webhook assinado, pela consulta da página do pedido e por uma conciliação a cada 5 minutos que pega o que os dois perderam (inclusive estorno e contestação depois de pago). A conciliação reivindica os pagamentos com `FOR UPDATE SKIP LOCKED` antes de chamar o Mercado Pago, então várias instâncias não consultam o mesmo pagamento, e nenhuma chamada externa acontece com trava aberta. Pix de pedido expirado é cancelado no Mercado Pago. Consulta que falha espera cada vez mais (backoff até 1 h) e, na 8ª falha seguida, a conciliação para e grava um alerta.
 
 **Transação tudo ou nada.** Se um item do carrinho não tem estoque, nenhum outro é reservado. Os itens são travados sempre na mesma ordem para evitar deadlock.
 

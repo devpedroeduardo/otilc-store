@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
-import { and, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { ENV, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
 import { payments } from '../db/schema';
@@ -7,6 +7,7 @@ import { PIX_PROVIDER, type PixProvider } from './mercadopago.client';
 import { PaymentTransitionService } from './payment-transition.service';
 import { skipIfRunning } from './skip-if-running';
 import { ON_DEMAND_CHECK_SECONDS } from './pix.service';
+import { RECONCILIATION_MAX_FAILURES, reconciliationDelayMs } from './reconciliation-backoff';
 
 /** Máximo de pagamentos conferidos com o Mercado Pago por rodada. */
 export const RECONCILIATION_BATCH = 50;
@@ -14,8 +15,18 @@ export const RECONCILIATION_BATCH = 50;
 export interface ReconciliationResult {
   /** Pagamentos reivindicados e consultados no Mercado Pago nesta rodada. */
   checked: number;
-  /** Consultas ou transições que falharam (ficam para a próxima rodada). */
+  /** Consultas ou transições que falharam (voltam depois do backoff, até o teto). */
   failed: number;
+}
+
+/** Pagamento reivindicado por uma rodada, com o estado de antes da reivindicação. */
+interface ClaimedPayment {
+  id: string;
+  orderId: string;
+  providerPaymentId: string;
+  previous: Date | null;
+  claimedAt: Date | null;
+  checkFailures: number;
 }
 
 /**
@@ -75,7 +86,8 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
    * Uma rodada. Seleciona até 50 pagamentos, os nunca conferidos primeiro:
    * - PENDING criados há mais de 2 min (o webhook chega antes) e há menos de 24 h;
    * - APPROVED nos últimos 7 dias e não conferidos há 6 h (estorno ou contestação);
-   * - nunca um conferido há menos de 20 s (verificação sob demanda ou outra instância).
+   * - nunca um conferido há menos de 20 s (verificação sob demanda ou outra instância);
+   * - nunca um em backoff (`next_check_at` no futuro) nem um no teto de falhas (spec-020).
    */
   async reconcile(): Promise<ReconciliationResult> {
     if (!this.provider) return { checked: 0, failed: 0 };
@@ -110,6 +122,8 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
               sql`now() - make_interval(secs => ${ON_DEMAND_CHECK_SECONDS})`,
             ),
           ),
+          lt(payments.checkFailures, RECONCILIATION_MAX_FAILURES),
+          or(isNull(payments.nextCheckAt), lte(payments.nextCheckAt, sql`now()`)),
         ),
       )
       .orderBy(sql`${payments.lastCheckedAt} ASC NULLS FIRST`)
@@ -119,28 +133,30 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
 
     // Reivindicação num comando só: o UPDATE termina (e solta as travas) antes das consultas.
     // Outra instância pula as linhas travadas e, depois do commit, as descarta pelo filtro de 20 s.
+    // `next_check_at = now()` marca a consulta em andamento: qualquer resposta do Mercado Pago
+    // aplicada pela transição (ex.: webhook no meio) a apaga, e a falha desta rodada não conta.
     const claimed = await this.db
       .update(payments)
-      .set({ lastCheckedAt: sql`now()` })
+      .set({ lastCheckedAt: sql`now()`, nextCheckAt: sql`now()` })
       .from(due)
       .where(eq(payments.id, due.id))
       .returning({
         id: payments.id,
+        orderId: payments.orderId,
         providerPaymentId: payments.providerPaymentId,
         previous: due.previous,
         claimedAt: payments.lastCheckedAt,
+        checkFailures: payments.checkFailures,
       });
 
     let failed = 0;
-    for (const { id, providerPaymentId, previous, claimedAt } of claimed) {
+    for (const payment of claimed) {
       try {
-        await this.transition.sync(providerPaymentId);
+        // Sucesso zera o backoff dentro da transição (vale também para o webhook).
+        await this.transition.sync(payment.providerPaymentId);
       } catch (err) {
         failed++;
-        this.logger.warn(
-          `Conciliação do pagamento ${providerPaymentId} falhou: ${(err as Error).message}`,
-        );
-        await this.release(id, previous, claimedAt);
+        await this.recordFailure(payment, (err as Error).message);
       }
     }
     if (claimed.length > 0) {
@@ -152,20 +168,67 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
   }
 
   /**
-   * Devolve o `last_checked_at` de antes da reivindicação, para a rodada seguinte tentar de novo
-   * (um APPROVED esperaria 6 h). Só se ninguém conferiu o pagamento depois: o banco guarda
-   * microssegundos e o `Date` só milissegundos, por isso o limite é `claimedAt + 1 ms`.
+   * Conta a falha num UPDATE só (spec-020): `check_failures + 1`, a próxima consulta com backoff
+   * e o `last_checked_at` de antes da reivindicação (um APPROVED não espera 6 h, só o backoff).
+   * Na 8ª falha seguida, sem próxima consulta, grava RECONCILIATION_STOPPED na mesma transação.
+   *
+   * Só se ninguém conferiu o pagamento depois da reivindicação (o banco guarda microssegundos e o
+   * `Date` só milissegundos, por isso o limite é `claimedAt + 1 ms`), se o contador não mudou e se
+   * a marca da reivindicação (`next_check_at`) continua lá: uma resposta do Mercado Pago aplicada
+   * no meio (webhook) a apaga, mesmo com o contador já zerado. Nesses casos nada é gravado.
    */
-  private async release(id: string, previous: Date | null, claimedAt: Date | null): Promise<void> {
+  private async recordFailure(payment: ClaimedPayment, message: string): Promise<void> {
+    const { id, orderId, providerPaymentId, previous, claimedAt, checkFailures } = payment;
     if (!claimedAt) return;
+    const failures = checkFailures + 1;
+    const stopped = failures >= RECONCILIATION_MAX_FAILURES;
+    const delaySeconds =
+      reconciliationDelayMs(failures, this.env.PAYMENT_RECONCILIATION_INTERVAL_MS) / 1000;
     try {
-      await this.db
-        .update(payments)
-        .set({ lastCheckedAt: previous })
-        .where(
-          and(eq(payments.id, id), lt(payments.lastCheckedAt, new Date(claimedAt.getTime() + 1))),
+      const updated = await this.db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(payments)
+          .set({
+            lastCheckedAt: previous,
+            checkFailures: failures,
+            nextCheckAt: stopped ? null : sql`now() + make_interval(secs => ${delaySeconds})`,
+          })
+          .where(
+            and(
+              eq(payments.id, id),
+              eq(payments.checkFailures, checkFailures),
+              isNotNull(payments.nextCheckAt),
+              lt(payments.lastCheckedAt, new Date(claimedAt.getTime() + 1)),
+            ),
+          )
+          .returning({ nextCheckAt: payments.nextCheckAt });
+        if (row && stopped) {
+          await this.transition.recordAlert(tx, {
+            paymentId: id,
+            providerPaymentId,
+            orderId,
+            alert: 'RECONCILIATION_STOPPED',
+          });
+        }
+        return row;
+      });
+
+      if (!updated) {
+        this.logger.warn(`Conciliação do pagamento ${providerPaymentId} falhou: ${message}`);
+      } else if (stopped) {
+        this.logger.warn(
+          `Conciliação do pagamento ${providerPaymentId} falhou (${failures}/${RECONCILIATION_MAX_FAILURES}): ${message}`,
         );
+        this.logger.error(
+          `Conciliação do pagamento ${providerPaymentId} (pedido ${orderId}) parou depois de ${failures} falhas seguidas; alerta RECONCILIATION_STOPPED.`,
+        );
+      } else {
+        this.logger.warn(
+          `Conciliação do pagamento ${providerPaymentId} falhou (${failures}/${RECONCILIATION_MAX_FAILURES}), próxima consulta em ${updated.nextCheckAt?.toISOString()}: ${message}`,
+        );
+      }
     } catch (err) {
+      this.logger.warn(`Conciliação do pagamento ${providerPaymentId} falhou: ${message}`);
       this.logger.error(err);
     }
   }
