@@ -128,7 +128,8 @@ export class PaymentTransitionService {
         .for('update');
 
       // O Mercado Pago respondeu: o pagamento existe e o backoff da conciliação recomeça do zero,
-      // inclusive no teto (spec-020). O alerta RECONCILIATION_STOPPED fica como histórico.
+      // inclusive no teto (spec-020). Apagar `next_check_at` também invalida uma reivindicação em
+      // andamento, cuja falha deixa de contar. O alerta RECONCILIATION_STOPPED fica como histórico.
       if (payment.checkFailures > 0 || payment.nextCheckAt) {
         await tx
           .update(payments)

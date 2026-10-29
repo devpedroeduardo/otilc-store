@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
-import { and, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { ENV, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
 import { payments } from '../db/schema';
@@ -133,9 +133,11 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
 
     // Reivindicação num comando só: o UPDATE termina (e solta as travas) antes das consultas.
     // Outra instância pula as linhas travadas e, depois do commit, as descarta pelo filtro de 20 s.
+    // `next_check_at = now()` marca a consulta em andamento: qualquer resposta do Mercado Pago
+    // aplicada pela transição (ex.: webhook no meio) a apaga, e a falha desta rodada não conta.
     const claimed = await this.db
       .update(payments)
-      .set({ lastCheckedAt: sql`now()` })
+      .set({ lastCheckedAt: sql`now()`, nextCheckAt: sql`now()` })
       .from(due)
       .where(eq(payments.id, due.id))
       .returning({
@@ -171,8 +173,9 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
    * Na 8ª falha seguida, sem próxima consulta, grava RECONCILIATION_STOPPED na mesma transação.
    *
    * Só se ninguém conferiu o pagamento depois da reivindicação (o banco guarda microssegundos e o
-   * `Date` só milissegundos, por isso o limite é `claimedAt + 1 ms`) e se o contador não mudou no
-   * meio (ex.: webhook aplicou um status e zerou): nesses casos nada é gravado.
+   * `Date` só milissegundos, por isso o limite é `claimedAt + 1 ms`), se o contador não mudou e se
+   * a marca da reivindicação (`next_check_at`) continua lá: uma resposta do Mercado Pago aplicada
+   * no meio (webhook) a apaga, mesmo com o contador já zerado. Nesses casos nada é gravado.
    */
   private async recordFailure(payment: ClaimedPayment, message: string): Promise<void> {
     const { id, orderId, providerPaymentId, previous, claimedAt, checkFailures } = payment;
@@ -194,6 +197,7 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
             and(
               eq(payments.id, id),
               eq(payments.checkFailures, checkFailures),
+              isNotNull(payments.nextCheckAt),
               lt(payments.lastCheckedAt, new Date(claimedAt.getTime() + 1)),
             ),
           )

@@ -550,6 +550,45 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await orderStatus(orderId)).toBe('PAID');
     });
 
+    it('verificação sob demanda (página do pedido) com resposta do MP também zera', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      const remote = mp.remote.get(paymentId)!;
+      goneFromMp(paymentId);
+      await failUntil(orderId, 3);
+
+      mp.remote.set(paymentId, remote);
+      approve(paymentId);
+      await http().get(`/api/orders/${orderId}/pix`).set('X-Forwarded-For', nextIp()).expect(200);
+
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'APPROVED',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
+      expect(await orderStatus(orderId)).toBe('PAID');
+    });
+
+    it('resposta do cancelamento pelo painel (syncFrom) também zera, inclusive no teto', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      const remote = mp.remote.get(paymentId)!;
+      goneFromMp(paymentId);
+      await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+
+      mp.remote.set(paymentId, remote);
+      await ctx.app.get(AdminOrdersService).updateStatus(orderId, 'CANCELED');
+
+      expect(mp.cancelSpy).toHaveBeenCalledWith(paymentId);
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'CANCELLED',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
+      expect(await orderStatus(orderId)).toBe('CANCELED');
+      expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+    });
+
     it('webhook depois do teto aplica o status do MP e zera o contador; o alerta fica no histórico', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);
@@ -572,6 +611,25 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       // De volta ao fluxo normal: o APPROVED volta a ser conferido (estorno) depois de 6 h.
       await checkedAgo(orderId, 7 * 3600);
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+    });
+
+    it('webhook bem-sucedido entre a reivindicação e a falha: a falha não conta (contador já zero)', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      // A consulta da conciliação demora e falha; no meio, o webhook consulta o MP com sucesso
+      // (o status continua pending, então nada mais muda no pagamento).
+      mp.getSpy.mockImplementationOnce(async () => {
+        await webhook(paymentId).expect(200);
+        throw new PixProviderError('Mercado Pago indisponível (tempo esgotado).');
+      });
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      expect(mp.getSpy).toHaveBeenCalledTimes(2);
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'PENDING',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
     });
 
     it(`${RECONCILIATION_BATCH} pagamentos falhando para sempre não impedem a consulta de um saudável`, async () => {
