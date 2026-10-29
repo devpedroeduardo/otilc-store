@@ -70,6 +70,14 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       if (!payment) throw new PixProviderError('Mercado Pago respondeu 404.');
       return { ...payment };
     });
+    // O painel cancela o Pix pendente antes de marcar pago (spec-019); aprovado continua aprovado.
+    jest.spyOn(client, 'cancelPayment').mockImplementation(async (id) => {
+      await sleep(10);
+      const payment = remote.get(id);
+      if (!payment) throw new PixProviderError('Mercado Pago respondeu 404.');
+      if (payment.status === 'pending') remote.set(id, { ...payment, status: 'cancelled' });
+      return { ...remote.get(id)! };
+    });
   });
   afterEach(() => jest.restoreAllMocks());
   afterAll(() => teardownTestApp(ctx));

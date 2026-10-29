@@ -3,7 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Logger } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import request from 'supertest';
@@ -24,6 +24,7 @@ import {
   PaymentReconciliationService,
   RECONCILIATION_BATCH,
 } from '../src/payments/payment-reconciliation.service';
+import { PaymentTransitionService } from '../src/payments/payment-transition.service';
 import { mockMercadoPago, setupPixTestApp, signature, type MercadoPagoMock } from './pix-setup';
 import { resetData, teardownTestApp, TEST_DATABASE_URL, type TestContext } from './setup';
 
@@ -178,6 +179,11 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         .set({ expiresAt: new Date(Date.now() - 60_000) })
         .where(eq(orders.id, late.orderId));
       await ctx.app.get(AdminOrdersService).updateStatus(paidByAdmin.orderId, 'PAID');
+      // Pago pelo painel antes da spec-019, quando o Pix ficava PENDING (hoje o painel o cancela).
+      await ctx.db
+        .update(payments)
+        .set({ status: 'PENDING' })
+        .where(eq(payments.orderId, paidByAdmin.orderId));
       approve(late.paymentId);
       approve(paidByAdmin.paymentId);
 
@@ -670,6 +676,227 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(mp.cancelSpy).not.toHaveBeenCalled();
       expect(await stockOf(v.id)).toEqual({ stock: 3, reserved: 0 });
     });
+  });
+
+  describe('cancelamento do Pix quando o painel marca pago ou cancela (spec-019)', () => {
+    const admin = () => ctx.app.get(AdminOrdersService);
+    const FAILED = 'Não foi possível cancelar o Pix no Mercado Pago. Tente de novo.';
+
+    /** Erro do PATCH de status como o painel o recebe (status HTTP e mensagem). */
+    async function adminError(orderId: string, to: OrderStatus) {
+      try {
+        await admin().updateStatus(orderId, to);
+      } catch (err) {
+        if (err instanceof HttpException) return { status: err.getStatus(), message: err.message };
+        throw err;
+      }
+      throw new Error('o painel deveria ter recusado a mudança');
+    }
+
+    async function chargesOf(orderId: string) {
+      const rows = await ctx.db
+        .select({ status: payments.status })
+        .from(payments)
+        .where(eq(payments.orderId, orderId));
+      return rows.map((r) => r.status).sort();
+    }
+
+    const leaksCustomer = () =>
+      warnings().some((w) =>
+        [customer.name, customer.email, customer.phone].some((c) => w.includes(c)),
+      );
+
+    it.each<[OrderStatus, { stock: number; reserved: number }]>([
+      ['PAID', { stock: 1, reserved: 0 }],
+      ['CANCELED', { stock: 2, reserved: 0 }],
+    ])(
+      '→ %s com Pix PENDING: cancela no MP antes de gravar; pagamento CANCELLED',
+      async (to, stock) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const seenAtCancel: OrderStatus[] = [];
+        const real = mp.cancelSpy.getMockImplementation()!;
+        mp.cancelSpy.mockImplementation(async (id) => {
+          // Outra conexão trava o pedido sem esperar (NOWAIT): nenhuma transação do painel está
+          // aberta durante o PUT, e o pedido ainda não mudou.
+          const [row] = await ctx.db
+            .select({ status: orders.status })
+            .from(orders)
+            .where(eq(orders.id, orderId))
+            .for('update', { noWait: true });
+          seenAtCancel.push(row.status);
+          return real(id);
+        });
+
+        const res = await admin().updateStatus(orderId, to);
+
+        expect(res.status).toBe(to);
+        expect(mp.cancelSpy).toHaveBeenCalledTimes(1);
+        expect(mp.cancelSpy).toHaveBeenCalledWith(paymentId);
+        expect(seenAtCancel).toEqual(['PENDING_PAYMENT']);
+        expect((await paymentOf(orderId)).status).toBe('CANCELLED');
+        expect(await orderStatus(orderId)).toBe(to);
+        expect(await stockOf(v.id)).toEqual(stock);
+        expect(await alertsOf(orderId)).toEqual([]);
+      },
+    );
+
+    it.each<OrderStatus>(['PAID', 'CANCELED'])(
+      '→ %s com falha no PUT: 502, nada muda, log com os ids e sem dados do cliente',
+      async (to) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        mp.cancelSpy.mockRejectedValueOnce(new PixProviderError('Mercado Pago respondeu 500.'));
+
+        expect(await adminError(orderId, to)).toEqual({ status: 502, message: FAILED });
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect((await paymentOf(orderId)).status).toBe('PENDING');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expect(warnings().some((w) => w.includes(paymentId) && w.includes(orderId))).toBe(true);
+        expect(leaksCustomer()).toBe(false);
+
+        // Com o Mercado Pago de volta, tentar de novo funciona.
+        await admin().updateStatus(orderId, to);
+        expect((await paymentOf(orderId)).status).toBe('CANCELLED');
+        expect(await orderStatus(orderId)).toBe(to);
+      },
+    );
+
+    it.each<OrderStatus>(['PAID', 'CANCELED'])(
+      '→ %s quando o MP responde que o Pix já foi pago: pedido PAID pelo Pix, 409, sem DUPLICATE_PAYMENT',
+      async (to) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        approve(paymentId);
+
+        expect(await adminError(orderId, to)).toEqual({
+          status: 409,
+          message: 'Este pedido já foi pago pelo Pix.',
+        });
+
+        expect(mp.cancelSpy).toHaveBeenCalledTimes(1);
+        expect(await orderStatus(orderId)).toBe('PAID');
+        expect(await paymentOf(orderId)).toMatchObject({ status: 'APPROVED', alert: null });
+        expect(await alertsOf(orderId)).toEqual([]);
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      },
+    );
+
+    it('PUT devolve a cobrança ainda pendente: 502 e nada muda', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      mp.cancelSpy.mockImplementationOnce(async (id) => ({ ...mp.remote.get(id)! }));
+
+      expect(await adminError(orderId, 'PAID')).toEqual({ status: 502, message: FAILED });
+
+      expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+      expect((await paymentOf(orderId)).status).toBe('PENDING');
+      expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+      expect(warnings().some((w) => w.includes(paymentId) && /continua pendente/.test(w))).toBe(
+        true,
+      );
+    });
+
+    it('pedido sem Pix ou com Pix já encerrado: não chama o MP; Marcar pago igual a hoje', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      const res = await http()
+        .post('/api/orders')
+        .set('X-Forwarded-For', nextIp())
+        .send({ items: [{ variantId: v.id, quantity: 1 }], customer })
+        .expect(201);
+      const rejected = await orderWithPix(v.id);
+      await ctx.db
+        .update(payments)
+        .set({ status: 'REJECTED' })
+        .where(eq(payments.orderId, rejected.orderId));
+
+      await admin().updateStatus((res.body as { id: string }).id, 'PAID');
+      await admin().updateStatus(rejected.orderId, 'PAID');
+
+      expect(mp.cancelSpy).not.toHaveBeenCalled();
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+    });
+
+    it('estresse: cliente paga (webhook) enquanto o painel marca pago: sempre 409, venda uma vez só, sem alerta', async () => {
+      const ROUNDS = 6;
+      const v = await variantWithStock('05-camiseta-preta', ROUNDS);
+      const messages = new Set<string>();
+
+      for (let round = 0; round < ROUNDS; round++) {
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        approve(paymentId);
+        // Conforme o escalonamento, o painel vê o Pix aprovado no PUT ("já pago pelo Pix"), vê o
+        // pedido já PAID ao abrir a transação, ou perde o UPDATE condicional (status = de).
+        const [hook, error] = await Promise.all([webhook(paymentId), adminError(orderId, 'PAID')]);
+
+        expect(hook.status).toBe(200);
+        expect(error.status).toBe(409);
+        messages.add(error.message);
+        expect(await orderStatus(orderId)).toBe('PAID');
+        expect(await paymentOf(orderId)).toMatchObject({ status: 'APPROVED', alert: null });
+        expect(await alertsOf(orderId)).toEqual([]);
+      }
+
+      for (const message of messages) {
+        expect(message).toMatch(/já foi pago pelo Pix|PAID → PAID|agora PAID/);
+      }
+      expect(await stockOf(v.id)).toEqual({ stock: 0, reserved: 0 });
+    });
+
+    it('cliente gera outro Pix logo depois do cancelamento: 409, nada muda; tentar de novo cancela o novo', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId } = await orderWithPix(v.id);
+      const transition = ctx.app.get(PaymentTransitionService);
+      const realSync = transition.syncFrom.bind(transition);
+      const spy = jest.spyOn(transition, 'syncFrom').mockImplementation(async (remote) => {
+        const outcome = await realSync(remote);
+        await http()
+          .post(`/api/orders/${orderId}/pix`)
+          .set('X-Forwarded-For', nextIp())
+          .expect(201);
+        return outcome;
+      });
+
+      expect(await adminError(orderId, 'PAID')).toEqual({
+        status: 409,
+        message:
+          'Um novo Pix foi gerado para este pedido durante a operação. Recarregue e tente de novo.',
+      });
+      expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+      expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+      expect(await chargesOf(orderId)).toEqual(['CANCELLED', 'PENDING']);
+
+      spy.mockRestore();
+      await admin().updateStatus(orderId, 'PAID');
+      expect(mp.cancelSpy).toHaveBeenCalledTimes(2);
+      expect(await chargesOf(orderId)).toEqual(['CANCELLED', 'CANCELLED']);
+      expect(await orderStatus(orderId)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+    });
+
+    it.each<[OrderStatus, 'DUPLICATE_PAYMENT' | 'PAID_AFTER_EXPIRY']>([
+      ['PAID', 'DUPLICATE_PAYMENT'],
+      ['CANCELED', 'PAID_AFTER_EXPIRY'],
+    ])(
+      'webhook approved atrasado de Pix já CANCELLED (pedido %s pelo painel): pedido e estoque não mudam, alerta %s',
+      async (to, alert) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        await admin().updateStatus(orderId, to);
+        expect((await paymentOf(orderId)).status).toBe('CANCELLED');
+        const stock = await stockOf(v.id);
+        // O MP não deveria aprovar um Pix cancelado; se aprovar, o syncFrom de hoje só alerta.
+        approve(paymentId);
+
+        await webhook(paymentId).expect(200);
+
+        expect(await orderStatus(orderId)).toBe(to);
+        expect(await stockOf(v.id)).toEqual(stock);
+        expect(await paymentOf(orderId)).toMatchObject({ status: 'APPROVED', alert });
+        expect(await alertsOf(orderId)).toEqual([alert]);
+      },
+    );
   });
 
   describe('limite de requisições', () => {

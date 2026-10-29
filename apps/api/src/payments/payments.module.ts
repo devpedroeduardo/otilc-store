@@ -25,7 +25,7 @@ import { PixService } from './pix.service';
     MercadoPagoWebhookService,
     PaymentReconciliationService,
   ],
-  // O job de expiração de pedidos cancela no Mercado Pago o Pix dos pedidos que expirou.
+  // O job de expiração e o painel de pedidos cancelam no Mercado Pago o Pix pendente do pedido.
   exports: [PaymentReconciliationService],
 })
 export class PaymentsModule {}
