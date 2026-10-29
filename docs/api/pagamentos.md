@@ -74,7 +74,7 @@ A página considera o pagamento confirmado quando `orderStatus` é `PAID`, e par
 Sem corpo. Chamado pela página do pedido logo depois do checkout.
 
 - Pedido inexistente: `404`.
-- Pedido que não está `PENDING_PAYMENT`, ou com `expiresAt` vencido: `409 ORDER_NOT_PAYABLE`.
+- Pedido que não está `PENDING_PAYMENT`, ou com `expiresAt` vencido: `409 ORDER_NOT_PAYABLE`. Também quando o pedido deixa de ser pagável **enquanto** o Mercado Pago cria o Pix (pago ou cancelado pelo painel, ou vencido): a gravação revalida o pedido travado, nada é gravado, o Pix recém-criado é cancelado no Mercado Pago e a resposta é `409 ORDER_NOT_PAYABLE`.
 - Já existe cobrança `PENDING` para o pedido: `200` com ela, **sem** chamar o Mercado Pago.
 - Senão, cria o pagamento Pix no Mercado Pago e grava a cobrança: `201`. O Pix vale **31 minutos a partir da criação** (`date_of_expiration`): o Mercado Pago exige no mínimo 30 minutos, mais 1 de folga, e a reserva do pedido é menor que isso. O prazo para pagar continua sendo o `expiresAt` do pedido; um pagamento aprovado depois dele não paga o pedido e gera o alerta `PAID_AFTER_EXPIRY` (decisão do Pedro, Q13). Se a cobrança anterior terminou `REJECTED` ou `CANCELLED` e o pedido ainda pode ser pago, é criada uma nova tentativa.
 - Pix desligado, Mercado Pago fora do ar, tempo esgotado ou resposta fora do formato esperado: `503 PIX_UNAVAILABLE`. O pedido e a reserva não mudam.
@@ -145,12 +145,13 @@ Reprocessar um pagamento já aprovado não faz nada. A transação trava o pedid
 
 Os alertas não aparecem na API pública nem no painel nesta versão (o painel é a spec-016); ficam no banco e no log:
 
-| Alerta              | Quando                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------- |
-| `PAID_AFTER_EXPIRY` | Aprovado depois do prazo do pedido, ou com o pedido `EXPIRED`/`CANCELED`                 |
-| `AMOUNT_MISMATCH`   | Aprovado com valor, moeda ou referência diferente do pedido                              |
-| `DUPLICATE_PAYMENT` | Aprovado com o pedido já `PAID` ou `SHIPPED` por outro caminho                           |
-| `PAYMENT_REVERSED`  | Estornado (`refunded`) ou contestado (`charged_back`, `in_mediation`) depois de aprovado |
+| Alerta                   | Quando                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `PAID_AFTER_EXPIRY`      | Aprovado depois do prazo do pedido, ou com o pedido `EXPIRED`/`CANCELED`                                                 |
+| `AMOUNT_MISMATCH`        | Aprovado com valor, moeda ou referência diferente do pedido                                                              |
+| `DUPLICATE_PAYMENT`      | Aprovado com o pedido já `PAID` ou `SHIPPED` por outro caminho                                                           |
+| `PAYMENT_REVERSED`       | Estornado (`refunded`) ou contestado (`charged_back`, `in_mediation`) depois de aprovado                                 |
+| `RECONCILIATION_STOPPED` | A conciliação falhou 8 vezes seguidas ao consultar o pagamento e parou de consultá-lo (spec-020); o status dele não muda |
 
 - **Os alertas se acumulam** (decisão do Pedro na spec-015): a tabela `payment_alerts` guarda todos os alertas de cada pagamento, com data, e nenhum apaga ou substitui outro. Exemplo: um Pix pago depois do prazo e depois estornado termina com `PAID_AFTER_EXPIRY` e `PAYMENT_REVERSED`.
 - Cada tipo de alerta aparece no máximo uma vez por pagamento (`UNIQUE (payment_id, alert)`): repetir a mesma notificação não grava nem registra nada de novo.
@@ -165,10 +166,14 @@ A API confere sozinha os pagamentos com o Mercado Pago, para corrigir o que o we
 - **Seleção**, até 50 pagamentos por rodada, os nunca conferidos primeiro (`last_checked_at` nulo, depois o mais antigo):
   - `PENDING` criados há mais de 2 minutos (o webhook costuma chegar antes) e há menos de 24 horas;
   - `APPROVED` nos últimos 7 dias e não conferidos há 6 horas, para pegar estorno e contestação;
-  - nunca um pagamento conferido há menos de 20 segundos (pela verificação sob demanda ou por outra rodada).
+  - nunca um pagamento conferido há menos de 20 segundos (pela verificação sob demanda ou por outra rodada);
+  - nunca um pagamento em espera de nova tentativa (`next_check_at` no futuro) nem um que chegou ao teto de falhas (ver abaixo).
 - **Várias instâncias**: a rodada reivindica os pagamentos num único comando (`FOR UPDATE SKIP LOCKED` e `last_checked_at = now()`). Uma instância pula o que outra está reivindicando e, depois do commit, o descarta pela regra dos 20 segundos. Duas rodadas simultâneas nunca consultam o mesmo pagamento.
 - **Sem trava aberta**: a consulta ao Mercado Pago só acontece depois de a reivindicação terminar; a mudança de estado é a mesma transição do webhook (tabela acima).
-- **Falha** (erro, tempo esgotado ou pagamento não encontrado no Mercado Pago): aviso no log com o id do pagamento, e a rodada segue para o próximo. O `last_checked_at` volta ao valor de antes da reivindicação (se ninguém conferiu o pagamento no meio), então a rodada seguinte tenta de novo, inclusive para `APPROVED`, sem esperar as 6 horas.
+- **Falha** (erro, tempo esgotado ou pagamento não encontrado no Mercado Pago; todas contam igual): a rodada segue para o próximo, e um único `UPDATE` (só se ninguém conferiu o pagamento no meio) soma 1 em `payments.check_failures`, agenda a próxima tentativa em `next_check_at` e devolve o `last_checked_at` de antes da reivindicação, então um `APPROVED` não espera as 6 horas, só o backoff. Aviso (`warn`) no log com o id do pagamento, o contador e a próxima tentativa.
+- **Backoff** (spec-020): depois da n-ésima falha seguida, a próxima tentativa fica para daqui a `intervalo × 2^(n−1)`, no máximo 1 hora. No padrão de 5 minutos: 5, 10, 20, 40, 60, 60 e 60 minutos. Um pagamento que falha sempre não volta mais ao topo de toda rodada, então pagamentos quebrados não ocupam o lote dos saudáveis.
+- **Teto**: na **8ª falha seguida** (cerca de 4 h 15 no padrão; 8 consultas em vez de ~288 em 24 h), a conciliação para de consultar o pagamento e grava o alerta `RECONCILIATION_STOPPED` (uma vez só), com um `error` no log. O pagamento continua `PENDING` ou `APPROVED`; pedido e estoque não mudam. Webhook, expiração, verificação sob demanda e cancelamento pelo painel seguem iguais. Retomar a conciliação de um pagamento no teto é da spec-018.
+- **Sucesso zera**: qualquer resposta do Mercado Pago que passa pela transição (conciliação, webhook, verificação sob demanda ou resposta do cancelamento) zera `check_failures` e `next_check_at`, inclusive para um pagamento no teto, que volta ao fluxo normal. O alerta `RECONCILIATION_STOPPED` já gravado fica como histórico.
 
 ## Cancelamento do Pix quando o pedido expira
 
