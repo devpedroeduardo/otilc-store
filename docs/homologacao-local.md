@@ -14,7 +14,7 @@ navegador ──> loja (localhost:3000) ──> API (localhost:3333) ──> Pos
 ```
 
 - Só a **API** passa pelo túnel (o webhook é de servidor para servidor). A loja fica em `http://localhost:3000`, então CORS e cookie do admin funcionam sem mudança.
-- O que o sandbox prova (seções 2 a 8): Pix gerado (caso c), pedido que expira e Pix cancelado no Mercado Pago (e), assinatura inválida (h) e envio pelo admin (i).
+- O que o sandbox prova (seções 2 a 8): Pix gerado (caso c), pedido que expira e Pix cancelado no Mercado Pago (e), assinatura inválida (h), envio pelo admin (i) e Pix cancelado quando o admin marca pago (j) ou cancela (k).
 - O que só um Pix **pago** prova fica no **bloco final (seção 9)**, com um Pix real de cerca de R$ 1: confirmação por webhook (d), webhook perdido e conciliação (f) e pago depois da expiração (g).
 - Tempo estimado: 1 h para preparar (ngrok, conta e credenciais do Mercado Pago), cerca de 30 min para os casos do sandbox (o caso e espera alguns minutos) e mais 1 h para o bloco final.
 - Há coisas que **nunca foram testadas contra o Mercado Pago real** (formato real do `x-signature`, corpo do webhook, `PUT` de cancelamento, e-mail do pagador). É isso que a homologação descobre. Falha vira spec de correção própria, não conserto durante o roteiro: anote o sintoma e siga.
@@ -221,6 +221,21 @@ Precisa de um pedido `PAID`. No sandbox o Pix não é aprovado (3.4), então cri
 - **Esperado:** `orders.status = SHIPPED`; o botão some.
 - **Resultado:** [ ] OK [ ] FALHA
 
+### j) Admin marca pago um pedido com Pix gerado e o Pix é cancelado
+
+- **Ação:** crie um pedido novo (caso c), espere o QR aparecer e **copie o Pix copia e cola**. Antes de ele vencer, abra o pedido em `/admin/orders` e clique em “Marcar pago”.
+- **Esperado (banco):** `payments.status = CANCELLED` e `orders.status = PAID`; `variants.reserved` voltou e `stock` caiu 1. Sem linha `Cancelamento do Pix <id> falhou` no log.
+- **Esperado (Mercado Pago):** o pagamento aparece como cancelado (`GET /v1/payments/<id>` com o seu token, ou no painel). Se o app de teste permitir pagar o código copiado, o pagamento é recusado; no sandbox isso pode não ser executável (3.4): anote.
+- **Se o painel mostrar “Não foi possível cancelar o Pix no Mercado Pago. Tente de novo.”:** a API respondeu 502 e nada mudou no banco; o log traz `Cancelamento do Pix <id> falhou (pedido <id>): ...`. Anote a mensagem (sem o token).
+- **Resultado:** [ ] OK [ ] FALHA
+
+### k) Admin cancela um pedido pendente com Pix gerado e o Pix é cancelado
+
+- **Ação:** como no caso j, mas clique em “Cancelar” em vez de “Marcar pago”.
+- **Esperado (banco):** `payments.status = CANCELLED` e `orders.status = CANCELED`; `variants.reserved` voltou ao valor de antes (reserva devolvida) e `stock` não mudou.
+- **Esperado (Mercado Pago):** igual ao caso j.
+- **Resultado:** [ ] OK [ ] FALHA
+
 ## 6. Consultas `psql` (só leitura)
 
 Contra o Postgres local do `docker compose` (usuário `otilc`, banco `otilc`). Use somente `SELECT`.
@@ -281,6 +296,8 @@ Cada comando de verdade é uma linha: `docker compose exec db psql -U otilc -d o
 | h-1  | assinatura inválida → 401                       |                             |                                                        |
 | h-2  | simulação do painel → 200                       |                             |                                                        |
 | i    | admin marca enviado                             |                             |                                                        |
+| j    | admin marca pago e o Pix é cancelado            |                             |                                                        |
+| k    | admin cancela e o Pix é cancelado               |                             |                                                        |
 
 Também envie: formato real do `x-signature`/`x-request-id` que chegou (sem o segredo), o prefixo do Access Token de teste e qualquer comportamento diferente do esperado.
 

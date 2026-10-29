@@ -179,3 +179,5 @@ O job de expiração (a cada minuto) devolve o estoque dos pedidos vencidos e, *
 - Falha no cancelamento: só aviso no log. O estoque já foi devolvido e a conciliação confere o pagamento depois, dentro da janela de 24 horas.
 
 A validade do Pix no Mercado Pago (31 minutos) e o prazo do pedido (30 minutos) não mudam; o cancelamento fecha o minuto de diferença entre os dois.
+
+O Pix `PENDING` também é cancelado quando o admin marca o pedido como pago ou o cancela pelo painel, **antes** de o status mudar (falha = nada muda); ver [admin.md](admin.md#cancelamento-do-pix-ao-marcar-pago-ou-cancelar-spec-019).
