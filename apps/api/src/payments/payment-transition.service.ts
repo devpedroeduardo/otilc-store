@@ -117,10 +117,24 @@ export class PaymentTransitionService {
         .where(eq(orders.id, local.orderId))
         .for('update');
       const [payment] = await tx
-        .select({ id: payments.id, status: payments.status })
+        .select({
+          id: payments.id,
+          status: payments.status,
+          checkFailures: payments.checkFailures,
+          nextCheckAt: payments.nextCheckAt,
+        })
         .from(payments)
         .where(eq(payments.id, local.id))
         .for('update');
+
+      // O Mercado Pago respondeu: o pagamento existe e o backoff da conciliação recomeça do zero,
+      // inclusive no teto (spec-020). O alerta RECONCILIATION_STOPPED fica como histórico.
+      if (payment.checkFailures > 0 || payment.nextCheckAt) {
+        await tx
+          .update(payments)
+          .set({ checkFailures: 0, nextCheckAt: null })
+          .where(eq(payments.id, payment.id));
+      }
 
       if (payment.status === 'APPROVED' && REVERSED_STATUSES.has(remote.status)) {
         // Estornado ou contestado depois de pago: só alerta, o pedido não muda (estorno manual).
@@ -232,9 +246,10 @@ export class PaymentTransitionService {
   /**
    * Acrescenta o alerta ao histórico, uma vez por tipo (`UNIQUE (payment_id, alert)`), e o deixa em
    * `payments.alert` só se ela ainda estiver vazia. Alerta novo vai para o log: ids e tipo, nunca
-   * dados do cliente. Repetido, não grava nem registra nada.
+   * dados do cliente. Repetido, não grava nem registra nada. Também usado pela conciliação, no
+   * teto de falhas (RECONCILIATION_STOPPED).
    */
-  private async recordAlert(
+  async recordAlert(
     tx: Pick<Database, 'insert' | 'update'>,
     a: { paymentId: string; providerPaymentId: string; orderId: string; alert: PaymentAlert },
   ): Promise<void> {

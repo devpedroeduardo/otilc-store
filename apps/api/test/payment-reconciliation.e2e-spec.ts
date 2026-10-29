@@ -9,6 +9,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import request from 'supertest';
 import type { OrderStatus } from '@otilc/shared';
 import { AdminOrdersService } from '../src/admin-orders/admin-orders.service';
+import { ENV, type Env } from '../src/config/env';
 import { createDatabase } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
 import { orders, paymentAlerts, payments, products, variants } from '../src/db/schema';
@@ -25,6 +26,10 @@ import {
   RECONCILIATION_BATCH,
 } from '../src/payments/payment-reconciliation.service';
 import { PaymentTransitionService } from '../src/payments/payment-transition.service';
+import {
+  RECONCILIATION_MAX_FAILURES,
+  reconciliationDelayMs,
+} from '../src/payments/reconciliation-backoff';
 import { mockMercadoPago, setupPixTestApp, signature, type MercadoPagoMock } from './pix-setup';
 import { resetData, teardownTestApp, TEST_DATABASE_URL, type TestContext } from './setup';
 
@@ -125,6 +130,14 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
     await ctx.db
       .update(payments)
       .set({ lastCheckedAt: secondsAgo === null ? null : new Date(Date.now() - secondsAgo * 1000) })
+      .where(eq(payments.orderId, orderId));
+  }
+
+  /** Faz o backoff da conciliação parecer vencido (spec-020): `next_check_at` no passado. */
+  async function backoffElapsed(orderId: string) {
+    await ctx.db
+      .update(payments)
+      .set({ nextCheckAt: new Date(Date.now() - 1000) })
       .where(eq(payments.orderId, orderId));
   }
 
@@ -364,8 +377,9 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await orderStatus(broken.orderId)).toBe('PENDING_PAYMENT');
       expect(warnings().some((w) => w.includes(broken.paymentId))).toBe(true);
 
-      // Sem ajuste manual: a falha devolveu o last_checked_at anterior.
+      // A falha devolveu o last_checked_at anterior; só o backoff (spec-020) separa as tentativas.
       mp.getSpy.mockImplementation(real);
+      await backoffElapsed(broken.orderId);
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
       expect(await orderStatus(broken.orderId)).toBe('PAID');
     });
@@ -384,6 +398,8 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
       expect((await paymentOf(orderId)).lastCheckedAt).toEqual(before);
 
+      // Espera só o backoff (spec-020), não as 6 h.
+      await backoffElapsed(orderId);
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
       expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
       // Agora conferido: só volta daqui a 6 h.
@@ -405,6 +421,246 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
       expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
       expect((await paymentOf(orderId)).lastCheckedAt).toEqual(newer);
+    });
+  });
+
+  describe('teto e backoff da conciliação (spec-020)', () => {
+    let error: jest.SpyInstance;
+    let intervalMs: number;
+    beforeEach(() => {
+      error = jest.spyOn(Logger.prototype, 'error');
+      intervalMs = ctx.app.get<Env>(ENV).PAYMENT_RECONCILIATION_INTERVAL_MS;
+    });
+
+    /** Some do "Mercado Pago": toda consulta dá 404, como no achado 4 da homologação. */
+    const goneFromMp = (paymentId: string) => mp.remote.delete(paymentId);
+
+    /** `next_check_at` a `ms` de agora, com folga para a latência do teste. */
+    function expectNextCheckIn(row: { nextCheckAt: Date | null }, ms: number) {
+      expect(row.nextCheckAt).not.toBeNull();
+      const diff = row.nextCheckAt!.getTime() - Date.now();
+      expect(Math.abs(diff - ms)).toBeLessThan(5_000);
+    }
+
+    /** Rodadas com o backoff vencido até a `failures`-ésima falha seguida do pagamento. */
+    async function failUntil(orderId: string, failures: number) {
+      for (let n = (await paymentOf(orderId)).checkFailures + 1; n <= failures; n++) {
+        await backoffElapsed(orderId);
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+        expect((await paymentOf(orderId)).checkFailures).toBe(n);
+      }
+    }
+
+    const stoppedLogs = (paymentId: string) =>
+      error.mock.calls.map((c) => String(c[0])).filter((m) => m.includes(paymentId));
+
+    it('falha conta 1 e agenda a próxima consulta para daqui a um intervalo; antes disso não consulta', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      goneFromMp(paymentId);
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      const row = await paymentOf(orderId);
+      expect(row.checkFailures).toBe(1);
+      expectNextCheckIn(row, intervalMs);
+      expect(row.lastCheckedAt).toBeNull();
+      expect(
+        warnings().some(
+          (w) => w.includes(paymentId) && w.includes(`(1/${RECONCILIATION_MAX_FAILURES})`),
+        ),
+      ).toBe(true);
+
+      // Fora dos 20 s e sem o backoff vencido: continua de fora.
+      await checkedAgo(orderId, 60);
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+      expect(mp.getSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('retrodatando next_check_at, volta a ser consultado e o atraso dobra', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      goneFromMp(paymentId);
+      await reconciliation.reconcile();
+
+      await backoffElapsed(orderId);
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      expect(mp.getSpy).toHaveBeenCalledTimes(2);
+      const row = await paymentOf(orderId);
+      expect(row.checkFailures).toBe(2);
+      expectNextCheckIn(row, 2 * intervalMs);
+    });
+
+    it('8ª falha seguida: 1 alerta RECONCILIATION_STOPPED, nunca mais consultado; pagamento, pedido e estoque intactos', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      goneFromMp(paymentId);
+
+      for (let n = 1; n < RECONCILIATION_MAX_FAILURES; n++) {
+        await failUntil(orderId, n);
+        expectNextCheckIn(await paymentOf(orderId), reconciliationDelayMs(n, intervalMs));
+      }
+      expect(await alertsOf(orderId)).toEqual([]);
+      expect(stoppedLogs(paymentId)).toEqual([]);
+
+      await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+      expect(mp.getSpy).toHaveBeenCalledTimes(RECONCILIATION_MAX_FAILURES);
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'PENDING',
+        checkFailures: RECONCILIATION_MAX_FAILURES,
+        nextCheckAt: null,
+        alert: 'RECONCILIATION_STOPPED',
+      });
+      expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+      expect(stoppedLogs(paymentId)).toHaveLength(1);
+      expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+      expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+
+      // Nem com o backoff e os 20 s vencidos: no teto, a conciliação não consulta mais.
+      await backoffElapsed(orderId);
+      await checkedAgo(orderId, null);
+      for (let i = 0; i < 2; i++) {
+        expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+      }
+      expect(mp.getSpy).toHaveBeenCalledTimes(RECONCILIATION_MAX_FAILURES);
+      expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+      expect(stoppedLogs(paymentId)).toHaveLength(1);
+      const logs = [...warnings(), ...error.mock.calls.map((c) => String(c[0]))].join('\n');
+      for (const secret of [customer.email, customer.phone, customer.name]) {
+        expect(logs).not.toContain(secret);
+      }
+    });
+
+    it('consulta bem-sucedida depois de falhas zera check_failures e next_check_at', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      const remote = mp.remote.get(paymentId)!;
+      goneFromMp(paymentId);
+      await failUntil(orderId, 3);
+
+      mp.remote.set(paymentId, remote);
+      approve(paymentId);
+      await backoffElapsed(orderId);
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'APPROVED',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
+      expect(await orderStatus(orderId)).toBe('PAID');
+    });
+
+    it('webhook depois do teto aplica o status do MP e zera o contador; o alerta fica no histórico', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      const remote = mp.remote.get(paymentId)!;
+      goneFromMp(paymentId);
+      await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+
+      mp.remote.set(paymentId, remote);
+      approve(paymentId);
+      await webhook(paymentId).expect(200);
+
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'APPROVED',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
+      expect(await orderStatus(orderId)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+      // De volta ao fluxo normal: o APPROVED volta a ser conferido (estorno) depois de 6 h.
+      await checkedAgo(orderId, 7 * 3600);
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+    });
+
+    it(`${RECONCILIATION_BATCH} pagamentos falhando para sempre não impedem a consulta de um saudável`, async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const healthy = await orderWithPix(v.id);
+      approve(healthy.paymentId);
+      // O saudável já foi conferido uma vez: os nunca conferidos (os quebrados) vêm antes dele.
+      await checkedAgo(healthy.orderId, 60);
+      const at = new Date(Date.now() - 10 * 60_000);
+      const brokenOrders = await ctx.db
+        .insert(orders)
+        .values(
+          Array.from({ length: RECONCILIATION_BATCH }, () => ({
+            customerName: customer.name,
+            customerEmail: customer.email,
+            customerPhone: customer.phone,
+            totalCents: 100,
+            expiresAt: new Date(Date.now() + 20 * 60_000),
+          })),
+        )
+        .returning({ id: orders.id });
+      await ctx.db.insert(payments).values(
+        brokenOrders.map((o, i) => ({
+          orderId: o.id,
+          providerPaymentId: String(3_000_000 + i),
+          status: 'PENDING' as const,
+          amountCents: 100,
+          expiresAt: new Date(Date.now() + 20 * 60_000),
+          createdAt: at,
+        })),
+      );
+
+      expect(await reconciliation.reconcile()).toEqual({
+        checked: RECONCILIATION_BATCH,
+        failed: RECONCILIATION_BATCH,
+      });
+      expect(checkedIds()).not.toContain(healthy.paymentId);
+      // Antes, os quebrados voltavam ao topo e ocupavam o lote de novo; agora esperam o backoff.
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      expect(await orderStatus(healthy.orderId)).toBe('PAID');
+    });
+
+    it('rodadas simultâneas com pagamentos falhando: cada um consultado e contado uma vez', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 20);
+      const created: { orderId: string; paymentId: string }[] = [];
+      for (let i = 0; i < 12; i++) created.push(await orderWithPix(v.id));
+      for (const o of created) goneFromMp(o.paymentId);
+
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => reconciliation.reconcile()),
+      );
+
+      expect(results.reduce((sum, r) => sum + r.checked, 0)).toBe(12);
+      expect(checkedIds()).toEqual(created.map((o) => o.paymentId).sort());
+      for (const o of created) {
+        const row = await paymentOf(o.orderId);
+        expect(row.checkFailures).toBe(1);
+        expectNextCheckIn(row, intervalMs);
+      }
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+    });
+
+    it('vale para APPROVED na verificação de estorno: backoff sem esperar 6 h e teto com alerta', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      approve(paymentId);
+      await reconciliation.reconcile();
+      expect(await orderStatus(orderId)).toBe('PAID');
+      await checkedAgo(orderId, 7 * 3600);
+      const before = (await paymentOf(orderId)).lastCheckedAt;
+      goneFromMp(paymentId);
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      const row = await paymentOf(orderId);
+      expect(row).toMatchObject({ checkFailures: 1, lastCheckedAt: before });
+      expectNextCheckIn(row, intervalMs);
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+
+      await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'APPROVED',
+        checkFailures: RECONCILIATION_MAX_FAILURES,
+        nextCheckAt: null,
+      });
+      expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+      expect(await orderStatus(orderId)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      await backoffElapsed(orderId);
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
     });
   });
 
@@ -1021,7 +1277,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
   });
 });
 
-describe('migração 0005: histórico de alertas', () => {
+describe('migrações 0005 (histórico de alertas) e 0006 (backoff da conciliação)', () => {
   const SCRATCH_DB = 'otilc_test_migration_0005';
   const scratchUrl = () => {
     const url = new URL(TEST_DATABASE_URL);
@@ -1030,19 +1286,35 @@ describe('migração 0005: histórico de alertas', () => {
   };
   const drizzleDir = path.join(__dirname, '..', 'drizzle');
 
-  /** Pasta de migrações só até a 0004: o estado do banco antes desta spec. */
-  function migrationsUpTo0004(): string {
+  /** Pasta de migrações só até a `last`: o estado do banco antes da spec que veio depois. */
+  function migrationsUpTo(last: number): string {
     const dir = mkdtempSync(path.join(tmpdir(), 'otilc-mig-'));
     cpSync(drizzleDir, dir, { recursive: true });
-    rmSync(path.join(dir, '0005_reconciliation_alerts.sql'));
-    rmSync(path.join(dir, 'meta', '0005_snapshot.json'));
     const journalPath = path.join(dir, 'meta', '_journal.json');
     const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
-      entries: { idx: number }[];
+      entries: { idx: number; tag: string }[];
     };
-    journal.entries = journal.entries.filter((e) => e.idx <= 4);
+    for (const e of journal.entries.filter((entry) => entry.idx > last)) {
+      rmSync(path.join(dir, `${e.tag}.sql`));
+      rmSync(path.join(dir, 'meta', `${e.tag.slice(0, 4)}_snapshot.json`));
+    }
+    journal.entries = journal.entries.filter((e) => e.idx <= last);
     writeFileSync(journalPath, JSON.stringify(journal));
     return dir;
+  }
+
+  async function insertOrder(db: ReturnType<typeof createDatabase>['db']) {
+    const [order] = await db
+      .insert(orders)
+      .values({
+        customerName: customer.name,
+        customerEmail: customer.email,
+        customerPhone: customer.phone,
+        totalCents: 1000,
+        expiresAt: new Date(),
+      })
+      .returning({ id: orders.id });
+    return order;
   }
 
   async function recreateScratch() {
@@ -1066,7 +1338,7 @@ describe('migração 0005: histórico de alertas', () => {
 
   it('copia os payments.alert existentes para payment_alerts, com RLS habilitado', async () => {
     await recreateScratch();
-    const dir = migrationsUpTo0004();
+    const dir = migrationsUpTo(4);
     const { db, pool } = createDatabase(scratchUrl());
     try {
       await migrate(db, { migrationsFolder: dir });
@@ -1080,12 +1352,14 @@ describe('migração 0005: histórico de alertas', () => {
           expiresAt: new Date(),
         })
         .returning({ id: orders.id });
-      const base = { orderId: order.id, amountCents: 1000, expiresAt: new Date() };
-      await db.insert(payments).values([
-        { ...base, providerPaymentId: '1', status: 'APPROVED', alert: 'PAID_AFTER_EXPIRY' },
-        { ...base, providerPaymentId: '2', status: 'APPROVED', alert: 'AMOUNT_MISMATCH' },
-        { ...base, providerPaymentId: '3', status: 'APPROVED' },
-      ]);
+      // Em SQL: o insert do Drizzle cita todas as colunas do schema.ts, inclusive as da 0006.
+      await db.execute(sql`
+        INSERT INTO payments (order_id, provider_payment_id, status, amount_cents, expires_at, alert)
+        VALUES
+          (${order.id}, '1', 'APPROVED', 1000, now(), 'PAID_AFTER_EXPIRY'),
+          (${order.id}, '2', 'APPROVED', 1000, now(), 'AMOUNT_MISMATCH'),
+          (${order.id}, '3', 'APPROVED', 1000, now(), NULL)
+      `);
 
       await runMigrations(scratchUrl());
 
@@ -1111,6 +1385,74 @@ describe('migração 0005: histórico de alertas', () => {
     } finally {
       await pool.end();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('0006 sobre um banco com a 0005: payments existentes ficam com 0 falhas e sem próxima consulta', async () => {
+    await recreateScratch();
+    const dir = migrationsUpTo(5);
+    const { db, pool } = createDatabase(scratchUrl());
+    try {
+      await migrate(db, { migrationsFolder: dir });
+      const order = await insertOrder(db);
+      await db.execute(sql`
+        INSERT INTO payments (order_id, provider_payment_id, status, amount_cents, expires_at)
+        VALUES (${order.id}, '1', 'PENDING', 1000, now()), (${order.id}, '2', 'APPROVED', 1000, now())
+      `);
+
+      await runMigrations(scratchUrl());
+
+      const rows = await db
+        .select({ checkFailures: payments.checkFailures, nextCheckAt: payments.nextCheckAt })
+        .from(payments)
+        .orderBy(payments.providerPaymentId);
+      expect(rows).toEqual([
+        { checkFailures: 0, nextCheckAt: null },
+        { checkFailures: 0, nextCheckAt: null },
+      ]);
+      // O valor novo do enum é usável depois do commit da migração.
+      const [first] = await db.select({ id: payments.id }).from(payments).limit(1);
+      await db
+        .insert(paymentAlerts)
+        .values({ paymentId: first.id, alert: 'RECONCILIATION_STOPPED' });
+      await expect(
+        db.update(payments).set({ checkFailures: -1 }).where(eq(payments.id, first.id)),
+      ).rejects.toMatchObject({
+        cause: { code: '23514', constraint: 'payments_check_failures_non_negative' },
+      });
+    } finally {
+      await pool.end();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('banco limpo: db:migrate aplica da 0000 à 0006 de uma vez e o alerta novo é gravável', async () => {
+    await recreateScratch();
+    await runMigrations(scratchUrl());
+    const { db, pool } = createDatabase(scratchUrl());
+    try {
+      const { rows: applied } = await db.execute<{ total: number }>(
+        sql`SELECT count(*)::int AS total FROM drizzle.__drizzle_migrations`,
+      );
+      expect(applied).toEqual([{ total: 7 }]);
+      const order = await insertOrder(db);
+      const [payment] = await db
+        .insert(payments)
+        .values({
+          orderId: order.id,
+          providerPaymentId: '1',
+          status: 'PENDING',
+          amountCents: 1000,
+          expiresAt: new Date(),
+        })
+        .returning({ id: payments.id, checkFailures: payments.checkFailures });
+      expect(payment.checkFailures).toBe(0);
+      await db
+        .insert(paymentAlerts)
+        .values({ paymentId: payment.id, alert: 'RECONCILIATION_STOPPED' });
+      const alerts = await db.select({ alert: paymentAlerts.alert }).from(paymentAlerts);
+      expect(alerts).toEqual([{ alert: 'RECONCILIATION_STOPPED' }]);
+    } finally {
+      await pool.end();
     }
   });
 });
