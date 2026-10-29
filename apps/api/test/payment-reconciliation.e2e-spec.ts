@@ -844,7 +844,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await stockOf(v.id)).toEqual({ stock: 0, reserved: 0 });
     });
 
-    it('cliente gera outro Pix logo depois do cancelamento: 409, nada muda; tentar de novo cancela o novo', async () => {
+    it('intercalação 1, Pix gravado antes do commit do painel: 409, nada muda; tentar de novo cancela o novo', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId } = await orderWithPix(v.id);
       const transition = ctx.app.get(PaymentTransitionService);
@@ -873,6 +873,99 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await chargesOf(orderId)).toEqual(['CANCELLED', 'CANCELLED']);
       expect(await orderStatus(orderId)).toBe('PAID');
       expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+    });
+
+    it.each<[OrderStatus, { stock: number; reserved: number }]>([
+      ['PAID', { stock: 1, reserved: 0 }],
+      ['CANCELED', { stock: 2, reserved: 0 }],
+    ])(
+      'intercalação 2, painel grava %s enquanto o MP cria o Pix: nada gravado, Pix cancelado no MP, ORDER_NOT_PAYABLE',
+      async (to, stock) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const res = await http()
+          .post('/api/orders')
+          .set('X-Forwarded-For', nextIp())
+          .send({ items: [{ variantId: v.id, quantity: 1 }], customer })
+          .expect(201);
+        const orderId = (res.body as { id: string }).id;
+        const real = mp.createSpy.getMockImplementation()!;
+        let createdId = '';
+        mp.createSpy.mockImplementation(async (input) => {
+          const created = await real(input);
+          createdId = created.id;
+          // Nenhuma trava do POST /pix fica aberta durante a chamada ao MP: o painel grava aqui.
+          await admin().updateStatus(orderId, to);
+          return created;
+        });
+
+        const pix = await http()
+          .post(`/api/orders/${orderId}/pix`)
+          .set('X-Forwarded-For', nextIp())
+          .expect(409);
+
+        expect(pix.body).toMatchObject({ code: 'ORDER_NOT_PAYABLE' });
+        expect(await chargesOf(orderId)).toEqual([]);
+        expect(mp.cancelSpy).toHaveBeenCalledTimes(1);
+        expect(mp.cancelSpy).toHaveBeenCalledWith(createdId);
+        expect(mp.remote.get(createdId)?.status).toBe('cancelled');
+        expect(await orderStatus(orderId)).toBe(to);
+        expect(await stockOf(v.id)).toEqual(stock);
+      },
+    );
+
+    it('intercalação 2 com falha ao cancelar o Pix não gravado: só log, nada gravado, ORDER_NOT_PAYABLE', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const res = await http()
+        .post('/api/orders')
+        .set('X-Forwarded-For', nextIp())
+        .send({ items: [{ variantId: v.id, quantity: 1 }], customer })
+        .expect(201);
+      const orderId = (res.body as { id: string }).id;
+      const real = mp.createSpy.getMockImplementation()!;
+      let createdId = '';
+      mp.createSpy.mockImplementation(async (input) => {
+        const created = await real(input);
+        createdId = created.id;
+        await admin().updateStatus(orderId, 'PAID');
+        return created;
+      });
+      mp.cancelSpy.mockRejectedValueOnce(new PixProviderError('Mercado Pago respondeu 500.'));
+
+      const pix = await http()
+        .post(`/api/orders/${orderId}/pix`)
+        .set('X-Forwarded-For', nextIp())
+        .expect(409);
+
+      expect(pix.body).toMatchObject({ code: 'ORDER_NOT_PAYABLE' });
+      expect(await chargesOf(orderId)).toEqual([]);
+      expect(warnings().some((w) => w.includes(createdId) && w.includes(orderId))).toBe(true);
+      expect(leaksCustomer()).toBe(false);
+      expect(await orderStatus(orderId)).toBe('PAID');
+    });
+
+    it('pedido vence enquanto o MP cria o Pix: nada gravado, Pix cancelado no MP, ORDER_NOT_PAYABLE', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const res = await http()
+        .post('/api/orders')
+        .set('X-Forwarded-For', nextIp())
+        .send({ items: [{ variantId: v.id, quantity: 1 }], customer })
+        .expect(201);
+      const orderId = (res.body as { id: string }).id;
+      const real = mp.createSpy.getMockImplementation()!;
+      mp.createSpy.mockImplementation(async (input) => {
+        const created = await real(input);
+        await ctx.db
+          .update(orders)
+          .set({ expiresAt: new Date(Date.now() - 1000) })
+          .where(eq(orders.id, orderId));
+        return created;
+      });
+
+      await http().post(`/api/orders/${orderId}/pix`).set('X-Forwarded-For', nextIp()).expect(409);
+
+      expect(await chargesOf(orderId)).toEqual([]);
+      expect(mp.cancelSpy).toHaveBeenCalledTimes(1);
+      expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
     });
 
     it.each<[OrderStatus, 'DUPLICATE_PAYMENT' | 'PAID_AFTER_EXPIRY']>([

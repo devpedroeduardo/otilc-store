@@ -132,7 +132,9 @@ export class AdminOrdersService {
         throw new ConflictException(await this.conflictReason(tx, id, from, paying));
       }
       if (from === 'PENDING_PAYMENT' && (await this.hasPendingPix(tx, id))) {
-        // O cliente gerou outro Pix depois do cancelamento (o UPDATE acima já trava o pedido).
+        // O cliente gerou outro Pix depois do cancelamento. O UPDATE acima trava o pedido, e o
+        // `PixService` só grava cobrança com o pedido travado e PENDING_PAYMENT: o que entrou antes
+        // aparece aqui; o que viria depois não entra.
         throw new ConflictException(pixCancelMessages.newCharge);
       }
 
