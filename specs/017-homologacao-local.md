@@ -26,6 +26,17 @@ O repositório traz um roteiro manual (`docs/homologacao-local.md`) que o Pedro 
   - `scripts/smoke.sh http://localhost:3333 http://localhost:3000` funciona contra o local e só faz GET.
 - Nunca validado contra o MP real (é isto que a homologação descobre): formato real de `x-signature`/`x-request-id`/`data.id`, corpo do webhook, campos de `GET`/`POST /v1/payments`, `date_of_expiration` com `+00:00`, `PUT cancelled`, e-mail do pagador no sandbox.
 
+## Emenda: bloco final com Pix real (decisão do Pedro, 2026-10-28)
+
+A documentação oficial do MP não traz método para aprovar um Pix de teste em `/v1/payments`. O Pedro autorizou explicitamente ampliar a homologação:
+
+- O sandbox cobre o que permite: Pix gerado, expiração + `PUT cancelled`, assinatura inválida (401), admin e `SHIPPED`.
+- O roteiro termina com um **bloco final** de Pix real de valor mínimo (~R$ 1), com aviso destacado no topo: credenciais de **produção da conta do próprio Pedro** no Mercado Pago (não a da conta do cliente), só no `apps/api/.env` local dele, API em localhost via túnel, sem deploy. Cobre os casos d (aprovado → `PAID` + estoque), f (webhook perdido → conciliação) e g (pago após expirar → alerta), se der.
+- Depois do bloco, o roteiro volta às credenciais de teste, e o último passo revoga ou renova as credenciais de produção no painel do MP.
+- Os agentes continuam sem tocar em credencial ou `.env` real. A execução do bloco é só do Pedro.
+
+Esta emenda substitui, para os casos d, f e g, o fallback "verificar via conciliação/consulta" da seção 3 de "Como fazer".
+
 ## Arquivos permitidos
 
 - `docs/homologacao-local.md` (novo)
