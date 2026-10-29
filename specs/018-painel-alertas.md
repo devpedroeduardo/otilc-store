@@ -34,7 +34,7 @@ Em `payment_alerts`, migração 0007 gerada por `npm run db:generate -w @otilc/a
 
 ### 2. Alerta que volta (Q4)
 
-`recordAlert` passa a reabrir um alerta resolvido: `ON CONFLICT (payment_id, alert) DO UPDATE SET resolved_at = NULL, resolved_by = NULL, created_at = now() WHERE payment_alerts.resolved_at IS NOT NULL`. Alerta aberto segue intacto (sem duplicar, sem mudar `created_at`). `payments.alert` segue com `COALESCE`.
+`recordAlert` ganha a opção `reopen` (padrão `false`). Só a conciliação a passa como `true`, ao gravar `RECONCILIATION_STOPPED`: `ON CONFLICT (payment_id, alert) DO UPDATE SET resolved_at = NULL, resolved_by = NULL, created_at = now() WHERE payment_alerts.resolved_at IS NOT NULL`. Alerta aberto segue intacto (sem duplicar, sem mudar `created_at`). Os demais tipos seguem com `DO NOTHING`: `PAYMENT_REVERSED` é regravado em toda sincronização de um `charged_back`/`in_mediation` (o payment local segue `APPROVED`) e reabriria sempre; os outros só nascem na 1ª transição para `APPROVED`. Um tipo novo não herda a reabertura sem decisão. `payments.alert` segue com `COALESCE`.
 
 ### 3. API (Q3, Q5, Q6)
 
@@ -117,7 +117,7 @@ Somente estes caminhos podem ser criados ou alterados:
 - [ ] (e2e API) Lista filtra por situação e tipo, pagina e ordena por `created_at desc`, com pedido e pagamento no item.
 - [ ] (e2e API) Resolver grava `resolved_at` e `resolved_by`; segundo resolve → 409; dois resolves simultâneos → um 200 e um 409; id inexistente → 404.
 - [ ] (e2e API) Retomar zera `check_failures` e `next_check_at` e o pagamento volta a ser selecionado pela conciliação; o alerta segue aberto; 409 para outro tipo ou pagamento fora do teto.
-- [ ] (e2e API) Alerta resolvido que se repete é reaberto (`resolved_at` nulo, `created_at` novo); alerta aberto que se repete não muda.
+- [ ] (e2e API) `RECONCILIATION_STOPPED` resolvido que se repete é reaberto (`resolved_at` nulo, `created_at` novo); aberto que se repete não muda; `PAYMENT_REVERSED` resolvido não reabre com consultas repetidas (a garantia "repetir a mesma consulta não grava nada" segue valendo).
 - [ ] (node:test) Mapa de orientação cobre os 5 tipos e cai no genérico; schemas da query aceitam/rejeitam o esperado.
 - [ ] (Vitest) Ações: sucesso, 409 e 401.
 - [ ] (Playwright) Admin vê o alerta semeado com tipo, pedido e orientação, marca resolvido e ele sai de Abertos.
