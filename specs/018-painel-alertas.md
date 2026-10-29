@@ -95,6 +95,7 @@ Somente estes caminhos podem ser criados ou alterados:
   - `apps/api/test/admin-alerts.e2e-spec.ts` (novo); `apps/api/test/payment-reconciliation.e2e-spec.ts` e `apps/api/test/payments.e2e-spec.ts` só para acrescentar casos (reabertura, retomar), sem mudar asserção existente
   - `docs/api/admin.md`, `docs/api/pagamentos.md`, `README.md` (seção 5)
   - `docs/agents/scorecard.md` (linha 020)
+  - Por causa da FK `resolved_by` (o Postgres recusa `TRUNCATE admin_users` sem `payment_alerts` no mesmo comando): `apps/api/test/setup.ts` e `e2e/global-setup.ts`, só para incluir `payment_alerts` explicitamente no `TRUNCATE` de admins; `apps/api/test/payment-reconciliation.e2e-spec.ts`, só o total de migrações (7 → 8) e o título ("da 0000 à 0007")
 - Faísca:
   - `apps/web/src/app/admin/(protected)/alerts/**` (novo)
   - `apps/web/src/components/admin/**`, `apps/web/src/lib/admin-api.ts`, `apps/web/src/lib/admin-api.mock.ts` e estilos do admin
@@ -111,7 +112,8 @@ Somente estes caminhos podem ser criados ou alterados:
 
 ## Critérios de aceite
 
-- [ ] (e2e API) Sem sessão → 401 nas 3 rotas; mutação sem `Origin` → 403; papel sem permissão → 403.
+- [ ] (e2e API) Sem sessão → 401 nas 3 rotas; mutação sem `Origin` → 403.
+- [ ] (unit) Cada rota exige a ação certa no metadado do guard (leitura: `order:read`; resolver e retomar: `order:updateStatus`). OWNER e STAFF podem as 3 rotas, então não há papel real para um 403 e2e; o 403 de papel segue coberto pelos testes do guard.
 - [ ] (e2e API) Lista filtra por situação e tipo, pagina e ordena por `created_at desc`, com pedido e pagamento no item.
 - [ ] (e2e API) Resolver grava `resolved_at` e `resolved_by`; segundo resolve → 409; dois resolves simultâneos → um 200 e um 409; id inexistente → 404.
 - [ ] (e2e API) Retomar zera `check_failures` e `next_check_at` e o pagamento volta a ser selecionado pela conciliação; o alerta segue aberto; 409 para outro tipo ou pagamento fora do teto.
