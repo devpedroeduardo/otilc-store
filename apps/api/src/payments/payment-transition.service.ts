@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/client';
 import { orders, paymentAlert, paymentAlerts, paymentNotifications, payments } from '../db/schema';
 import { applyStockEffect, stockEffects } from '../orders/order-stock';
@@ -249,16 +249,27 @@ export class PaymentTransitionService {
    * `payments.alert` só se ela ainda estiver vazia. Alerta novo vai para o log: ids e tipo, nunca
    * dados do cliente. Repetido, não grava nem registra nada. Também usado pela conciliação, no
    * teto de falhas (RECONCILIATION_STOPPED).
+   *
+   * Com `reopen`, o alerta repetido que o admin já resolveu volta a abrir, com `created_at` novo,
+   * e vai para o log como novo; aberto, segue intacto (spec-018). Só a conciliação reabre: ela
+   * só chega ao teto de novo depois de o contador ter sido zerado. `PAYMENT_REVERSED` é regravado
+   * em toda sincronização de um `charged_back`/`in_mediation` e reabriria sempre.
    */
   async recordAlert(
     tx: Pick<Database, 'insert' | 'update'>,
     a: { paymentId: string; providerPaymentId: string; orderId: string; alert: PaymentAlert },
+    { reopen = false }: { reopen?: boolean } = {},
   ): Promise<void> {
-    const inserted = await tx
-      .insert(paymentAlerts)
-      .values({ paymentId: a.paymentId, alert: a.alert })
-      .onConflictDoNothing()
-      .returning({ id: paymentAlerts.id });
+    const insert = tx.insert(paymentAlerts).values({ paymentId: a.paymentId, alert: a.alert });
+    const inserted = await (
+      reopen
+        ? insert.onConflictDoUpdate({
+            target: [paymentAlerts.paymentId, paymentAlerts.alert],
+            set: { resolvedAt: null, resolvedBy: null, createdAt: sql`now()` },
+            setWhere: isNotNull(paymentAlerts.resolvedAt),
+          })
+        : insert.onConflictDoNothing()
+    ).returning({ id: paymentAlerts.id });
     if (inserted.length === 0) return;
     await tx
       .update(payments)
