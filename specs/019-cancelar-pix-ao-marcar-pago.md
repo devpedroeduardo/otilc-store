@@ -60,10 +60,11 @@ Fatos do Recon §8: (a) `APPROVED` para pedido `CANCELED` hoje cai em `PAID_AFTE
 
 Somente estes caminhos podem ser criados ou alterados:
 
-- `apps/api/src/admin/**` (service, controller e specs do admin de pedidos)
+- `apps/api/src/admin-orders/**` (service, controller, módulo e specs do admin de pedidos)
 - `apps/api/src/payments/**` (extração do cancelamento, módulo, specs)
 - `apps/api/src/orders/order-expiration.service.ts` (só se a extração exigir trocar a chamada)
 - `apps/api/test/admin-orders.e2e-spec.ts`, `apps/api/test/payment-reconciliation.e2e-spec.ts`, `apps/api/test/pix-setup.ts`
+- `apps/api/test/payments.e2e-spec.ts`: só para acrescentar o spy de `cancelPayment` no `beforeEach`, sem mudar nenhuma asserção (emenda da Bússola, 2026-10-29: o teste de `DUPLICATE_PAYMENT` marca pago pelo painel com Pix `PENDING`)
 - `apps/web/src/**`: só o componente do painel que muda o status do pedido, e só para exibir a mensagem de erro da API, se hoje não exibir
 - `docs/api/admin.md`, `docs/api/pagamentos.md` (só o descrito na seção 4)
 - `docs/homologacao-local.md` (casos j e k)
