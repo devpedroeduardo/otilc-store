@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { ProductEditor } from './product-editor';
 import { OrderActions } from './order-actions';
-import type { AdminOrderDetailDto, AdminProductDto } from '@otilc/shared';
+import { AlertActions } from './alert-actions';
+import type { AdminAlertDto, AdminOrderDetailDto, AdminProductDto } from '@otilc/shared';
 
 const mocks = vi.hoisted(() => {
   class TestAdminApiError extends Error {
@@ -16,6 +17,8 @@ const mocks = vi.hoisted(() => {
   return {
     updateStock: vi.fn(),
     updateOrder: vi.fn(),
+    resolveAlert: vi.fn(),
+    resumeReconciliation: vi.fn(),
     saveProduct: vi.fn(),
     refresh: vi.fn(),
     replace: vi.fn(),
@@ -27,6 +30,8 @@ vi.mock('@/lib/admin-api', () => ({
   adminApi: {
     updateStock: mocks.updateStock,
     updateOrder: mocks.updateOrder,
+    resolveAlert: mocks.resolveAlert,
+    resumeReconciliation: mocks.resumeReconciliation,
     saveProduct: mocks.saveProduct,
     session: mocks.session,
   },
@@ -134,5 +139,51 @@ describe('admin panels', () => {
     await expect(ProtectedLayout({ children: <p>private</p> })).rejects.toThrow(
       'REDIRECT:/admin/login',
     );
+  });
+});
+
+const alert: AdminAlertDto = {
+  id: 'a1',
+  type: 'RECONCILIATION_STOPPED',
+  createdAt: '2026-10-29T15:00:00.000Z',
+  resolvedAt: null,
+  resolvedBy: null,
+  payment: { id: 'pay1', providerPaymentId: '123', status: 'PENDING', amountCents: 25980 },
+  order: { id: 'o1', number: 42, status: 'PENDING_PAYMENT' },
+};
+
+describe('AlertActions', () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(cleanup);
+  it('resolves an open alert and refreshes', async () => {
+    mocks.resolveAlert.mockResolvedValueOnce(alert);
+    render(<AlertActions alert={alert} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar resolvido' }));
+    await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
+    expect(mocks.resolveAlert).toHaveBeenCalledWith('a1');
+  });
+  it('shows the API message on 409', async () => {
+    mocks.resolveAlert.mockRejectedValueOnce(
+      new mocks.ApiError(409, 'Este alerta já foi marcado como resolvido.'),
+    );
+    render(<AlertActions alert={alert} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar resolvido' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Este alerta já foi marcado como resolvido.',
+    );
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+  it('redirects to login on 401', async () => {
+    mocks.resumeReconciliation.mockRejectedValueOnce(new mocks.ApiError(401, 'Sessão expirada'));
+    render(<AlertActions alert={alert} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retomar conciliação' }));
+    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalledWith('/admin/login'));
+  });
+  it('offers resume only on stopped reconciliation and resolve only while open', () => {
+    const { rerender } = render(<AlertActions alert={{ ...alert, type: 'DUPLICATE_PAYMENT' }} />);
+    expect(screen.queryByRole('button', { name: 'Retomar conciliação' })).not.toBeInTheDocument();
+    rerender(<AlertActions alert={{ ...alert, resolvedAt: '2026-10-29T16:00:00.000Z' }} />);
+    expect(screen.queryByRole('button', { name: 'Marcar resolvido' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retomar conciliação' })).toBeInTheDocument();
   });
 });
