@@ -50,6 +50,13 @@
       "when": 1793306124434,
       "tag": "0006_reconciliation_backoff",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793309542219,
+      "tag": "0007_payment_alerts_resolution",
+      "breakpoints": true
     }
   ]
 }
