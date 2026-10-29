@@ -1,4 +1,6 @@
 import type {
+  AdminAlertDto,
+  AdminAlertQuery,
   AdminOrderDetailDto,
   AdminOrderListItemDto,
   AdminProductDto,
@@ -68,6 +70,23 @@ const orders: AdminOrderDetailDto[] = [
   },
 ];
 
+const alerts: AdminAlertDto[] = [
+  {
+    id: 'alert-demo',
+    type: 'RECONCILIATION_STOPPED',
+    createdAt: '2026-10-29T15:00:00.000Z',
+    resolvedAt: null,
+    resolvedBy: null,
+    payment: {
+      id: 'payment-demo',
+      providerPaymentId: '1234567890',
+      status: 'PENDING',
+      amountCents: 25980,
+    },
+    order: { id: 'order-demo', number: 1, status: 'PENDING_PAYMENT' },
+  },
+];
+
 export const mockAdminApi = {
   async login(email: string, _password: string) {
     return email.includes('staff') ? staff : owner;
@@ -132,5 +151,25 @@ export const mockAdminApi = {
     const order = orders.find((item) => item.id === id) ?? orders[0]!;
     order.status = status;
     return order;
+  },
+  async alerts(query: Partial<AdminAlertQuery>): Promise<Paginated<AdminAlertDto>> {
+    const situation = query.situacao ?? 'abertos';
+    const filtered = alerts.filter(
+      (item) =>
+        (situation === 'todos' || (situation === 'abertos') === (item.resolvedAt === null)) &&
+        (!query.tipo || item.type === query.tipo),
+    );
+    return { items: filtered, page: 1, perPage: 20, total: filtered.length, totalPages: 1 };
+  },
+  async resolveAlert(id: string) {
+    const alert = alerts.find((item) => item.id === id) ?? alerts[0]!;
+    if (alert.resolvedAt)
+      throw new AdminApiError(409, 'Este alerta já foi marcado como resolvido.');
+    alert.resolvedAt = new Date().toISOString();
+    alert.resolvedBy = owner.name;
+    return alert;
+  },
+  async resumeReconciliation(id: string) {
+    return alerts.find((item) => item.id === id) ?? alerts[0]!;
   },
 };
