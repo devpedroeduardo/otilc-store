@@ -1,8 +1,8 @@
 # Homologação local: Pix com o Mercado Pago sandbox
 
-Roteiro manual para você provar, na sua máquina (WSL), que a loja gera um Pix no Mercado Pago de **teste**, que o webhook volta por um túnel até a API local e que expiração, cancelamento e conciliação funcionam. Decisões na [spec-017](../specs/017-homologacao-local.md).
+Roteiro manual para você provar, na sua máquina (WSL), que a loja gera um Pix no Mercado Pago (teste, e um Pix real mínimo no bloco final), que o webhook volta por um túnel até a API local e que expiração, cancelamento e conciliação funcionam. Decisões na [spec-017](../specs/017-homologacao-local.md).
 
-> **Nada aqui é produção.** Sem Render, Vercel ou Supabase. A API roda com `NODE_ENV` de desenvolvimento (nunca `production`), contra o Postgres do `docker compose`. Credenciais, segredo do webhook e token do túnel são seus: ficam em `apps/api/.env`, no painel do Mercado Pago e no `ngrok`, nunca no repositório.
+> **Nada aqui vai ao ar.** Sem Render, Vercel ou Supabase: a API roda com `NODE_ENV` de desenvolvimento (nunca `production`), contra o Postgres do `docker compose`. As seções 1 a 8 usam só credenciais de **teste**. A seção 9 (bloco final) usa credenciais de **produção** da sua própria conta do Mercado Pago, com um Pix real de cerca de R$ 1, e tem aviso próprio. Credenciais, segredo do webhook e token do túnel são seus: ficam em `apps/api/.env`, no painel do Mercado Pago e no `ngrok`, nunca no repositório.
 
 ## 1. Visão geral
 
@@ -14,10 +14,11 @@ navegador ──> loja (localhost:3000) ──> API (localhost:3333) ──> Pos
 ```
 
 - Só a **API** passa pelo túnel (o webhook é de servidor para servidor). A loja fica em `http://localhost:3000`, então CORS e cookie do admin funcionam sem mudança.
-- O que o roteiro prova: Pix gerado (caso c), pago e confirmado por webhook (d), pedido que expira e Pix cancelado no Mercado Pago (e), webhook perdido e conciliação (f), pago depois da expiração (g), assinatura inválida (h) e envio pelo admin (i).
-- Tempo estimado: 1 h para preparar (ngrok, conta e credenciais do Mercado Pago) e cerca de 1 h para os casos, já que (e) e (f) esperam alguns minutos.
+- O que o sandbox prova (seções 2 a 8): Pix gerado (caso c), pedido que expira e Pix cancelado no Mercado Pago (e), assinatura inválida (h) e envio pelo admin (i).
+- O que só um Pix **pago** prova fica no **bloco final (seção 9)**, com um Pix real de cerca de R$ 1: confirmação por webhook (d), webhook perdido e conciliação (f) e pago depois da expiração (g).
+- Tempo estimado: 1 h para preparar (ngrok, conta e credenciais do Mercado Pago), cerca de 30 min para os casos do sandbox (o caso e espera alguns minutos) e mais 1 h para o bloco final.
 - Há coisas que **nunca foram testadas contra o Mercado Pago real** (formato real do `x-signature`, corpo do webhook, `PUT` de cancelamento, e-mail do pagador). É isso que a homologação descobre. Falha vira spec de correção própria, não conserto durante o roteiro: anote o sintoma e siga.
-- **Aprovar um Pix no sandbox é a maior incógnita** (seção 3.4). Os casos d, f, g e i dependem disso.
+- Três pontos não foram confirmados na documentação e ficam como **verificação durante a execução**: o prefixo do Access Token, o botão “Simular notificação” do painel e se a `notification_url` e o webhook do painel disparam juntos.
 
 ## 2. Passo 0 — pré-requisitos
 
@@ -124,13 +125,15 @@ Em **Suas integrações → sua aplicação → Webhooks → Configurar notifica
 
 A loja também manda a `notification_url` em cada Pix criado (`MP_NOTIFICATION_URL`). A documentação diz que a URL informada na criação do pagamento tem prioridade sobre a do painel, mas **não diz se os dois disparam**. O caso d registra o que acontece.
 
-### 3.4 Aprovar um Pix de teste (não confirmado)
+### 3.4 O que o sandbox não cobre: Pix aprovado
 
-- A documentação do `POST /v1/payments` com Pix ([Integrar Pix](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/integration-configuration/integrate-pix)) mostra a criação (resposta `pending`), mas **não descreve como aprovar um Pix de teste**.
-- A página de teste de Pix da API de Orders ([Realizar uma compra teste com Pix](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/integration-test/pix)) usa o valor `APRO` em `payer.first_name` para aprovar sozinho, mas é de `/v1/orders`, não de `/v1/payments`, que é o que a loja usa. A loja não envia `first_name`, então esse caminho **não** se aplica.
-- A Central de Ajuda do Mercado Pago ("Posso pagar com Pix em ambiente de teste?") aparece nas buscas dizendo que **Pix não é pago em ambiente de teste**; a página bloqueou a leitura automática (403) e **não consegui ler o texto**. Leia você: <https://www.mercadopago.com.br/ajuda/pagar-pix-ambiente-de-teste_36545>.
+Não achei na documentação oficial como aprovar um Pix de teste criado por `POST /v1/payments` (a loja usa essa API):
 
-**O que fazer:** tente, nesta ordem, e anote o que funcionou na tabela da seção 8: (1) painel → Integrações → sua aplicação, com o seletor em **Teste**, aba de pagamentos de teste (veja se há ação para aprovar); (2) pagar o QR com a conta de comprador de teste, se o painel orientar; (3) nada disso funcionando, marque **“não executável no sandbox”** nos casos d, f, g e i-aprovação. Eles ficam como “verificar via conciliação/consulta” (`GET /v1/payments/<id>` com o seu token), e a decisão de como seguir é da Bússola/Pedro. Os casos a, b, c, e, h independem disso.
+- A página de [Integrar Pix](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/integration-configuration/integrate-pix) mostra só a criação (resposta `pending`).
+- O valor `APRO` em `payer.first_name` aprova sozinho o Pix de teste da API de Orders ([Realizar uma compra teste com Pix](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/integration-test/pix)), mas essa é `/v1/orders`, e a loja não manda `first_name`.
+- A Central de Ajuda ([Posso pagar com Pix em ambiente de teste?](https://www.mercadopago.com.br/ajuda/pagar-pix-ambiente-de-teste_36545)) aparece nas buscas dizendo que Pix não é pago em teste; a página bloqueou a leitura automática (403), então **leia você**.
+
+Por isso, o sandbox cobre os casos **a, b, c, e, h e i**. Os casos que precisam de Pix **aprovado** (d, f, g) estão no **bloco final (seção 9)**, com um Pix real de valor mínimo. Se, ao executar, você descobrir que o sandbox aprova o Pix (por exemplo, por uma ação no painel), anote na tabela da seção 8: isso é uma descoberta útil, não uma falha do roteiro.
 
 ## 4. Onde colocar cada valor
 
@@ -179,17 +182,6 @@ Marque OK ou FALHA em cada um e preencha a tabela da seção 8. Para as consulta
 - **Se aparecer “Pix indisponível”:** a API respondeu 503. Veja no log da API a linha `Falha ao criar o Pix do pedido ...: Mercado Pago respondeu NNN.` (o código HTTP do Mercado Pago, que diz o porquê) ou, se a mensagem for sobre variável, confira as três `MP_*`. Nunca cole o corpo da resposta ou o token em lugar nenhum.
 - **Resultado:** [ ] OK [ ] FALHA
 
-### d) Pix aprovado → webhook → pedido PAID
-
-Depende de 3.4. Se não der para aprovar o Pix, marque “não executável” e veja o que a consulta `GET /v1/payments/<id>` diz do pagamento.
-
-- **Ação:** com a página do pedido aberta, aprove o Pix de teste pelo método que você achou em 3.4.
-- **Esperado (ngrok):** em `:4040` aparece `POST /api/webhooks/mercadopago?data.id=<id>&type=payment` com respostas `200`. Registre também o conteúdo dos headers `x-signature` e `x-request-id` (sem copiar o segredo).
-- **Esperado (tela):** em até alguns segundos, “Pagamento confirmado”. (A página consulta a API a cada 5 s, e a API consulta o Mercado Pago, no máximo uma vez por 20 s; por isso a tela pode atualizar **sem** o webhook. Quem confirma que o webhook funcionou é a consulta abaixo, não a tela.)
-- **Esperado (banco):** `orders.status = PAID`; `payments.status = APPROVED` com `approved_at` preenchido; `variants.stock` caiu e `variants.reserved` voltou; **`payment_notifications` tem ao menos uma linha** para o `provider_payment_id` (é o registro de que um webhook foi aceito).
-- **Duplicatas:** conte as linhas de `payment_notifications` desse pagamento e as requisições em `:4040`. Anote: só o webhook do painel? só a `notification_url` do pagamento? os dois (uma linha por `x-request-id` diferente)? O segundo é processado sem efeito (`already_approved`).
-- **Resultado:** [ ] OK [ ] FALHA — disparou: [ ] painel [ ] notification_url [ ] os dois
-
 ### e) Pedido não pago expira e o Pix é cancelado
 
 - **Ação:** crie um pedido como no caso c e **não pague**. Deixe passar o prazo (`ORDER_HOLD_MINUTES=5`) mais o intervalo do job (a cada 60 s): cerca de 6 minutos.
@@ -198,25 +190,6 @@ Depende de 3.4. Se não der para aprovar o Pix, marque “não executável” e 
 - **Esperado (banco):** `orders.status = EXPIRED`; `variants.reserved` voltou ao valor de antes; `payments.status = CANCELLED`. A API só registra no log quando o cancelamento **falha** (`Cancelamento do Pix <id> falhou: ...`); ausência dessa linha e `CANCELLED` no banco são o sinal de que o `PUT` no Mercado Pago foi aceito.
 - **Esperado (Mercado Pago):** o pagamento aparece como cancelado se você consultar `GET /v1/payments/<id>` com o seu token (ou no painel, se houver tela de pagamentos de teste).
 - **Resultado:** [ ] OK [ ] FALHA
-
-### f) Webhook perdido → conciliação
-
-Depende de 3.4 (precisa aprovar o Pix).
-
-- **Ação:** crie um pedido (caso c) e **feche a aba `/pedido/<id>`**: a consulta sob demanda da página também confirmaria o pagamento e mascararia este teste. Derrube o túnel (Ctrl+C no ngrok). Aprove o Pix. Espere. Suba o túnel de novo (`ngrok http 3333`) só depois do resultado.
-- **Esperado (log da API):** em até cerca de 30 s depois de passados 2 minutos da criação do Pix: `Conciliação: 1 pagamento(s) conferido(s), 0 com falha.`
-- **Esperado (banco):** `orders.status = PAID` e `payments.status = APPROVED`, sem linha nova em `payment_notifications` para esse pagamento.
-- **Obs.:** o Mercado Pago reenvia webhooks que não foram confirmados (a documentação cita novas tentativas a cada 15 minutos); se um reenvio chegar depois, ele não muda nada.
-- **Resultado:** [ ] OK [ ] FALHA
-
-### g) Pix pago depois da expiração → `PAID_AFTER_EXPIRY`
-
-Depende de 3.4. É o caso mais difícil de armar: o job cancela o Pix cerca de 1 minuto depois da expiração, então a janela é curta. A saída é manter a API parada.
-
-- **Ação:** crie o pedido (caso c). **Pare a API** (Ctrl+C no `npm run dev`) logo depois de criado. Espere passar 6 minutos (o pedido já venceu, o Pix ainda vale: ele dura 31 minutos). Aprove o Pix. Suba a API de novo.
-- **Esperado (log da API):** um aviso (`warn`) de alerta com o id do pagamento, o id do pedido e `PAID_AFTER_EXPIRY`, e a linha `1 pedido(s) expirado(s); estoque liberado.` (a ordem entre as duas pode variar).
-- **Esperado (banco):** `orders.status = EXPIRED` (o pedido **não** vira `PAID`); `payments.status = APPROVED`; uma linha em `payment_alerts` com `alert = PAID_AFTER_EXPIRY`. O estorno ao cliente seria manual no painel do Mercado Pago.
-- **Resultado:** [ ] OK [ ] FALHA [ ] não executável
 
 ### h) Assinatura inválida → 401
 
@@ -239,7 +212,7 @@ h-2, só se o painel tiver o botão de simular notificação (3.3): dispare-o pa
 
 ### i) Admin marca o pedido como enviado
 
-Precisa de um pedido `PAID`. Se não conseguiu pagar o Pix (3.4), use “Marcar pago” no painel só para testar o botão de envio; isso **não** prova o Pix.
+Precisa de um pedido `PAID`. No sandbox o Pix não é aprovado (3.4), então use o botão “Marcar pago” do painel num pedido do caso c, só para chegar ao botão de envio; isso **não** prova o Pix. (Com o pedido pago de verdade do bloco final, repita este passo se quiser.)
 
 - **Ação:** em `/admin/orders`, abra o pedido pago e clique em “Marcar enviado”.
 - **Esperado:** `orders.status = SHIPPED`; o botão some.
@@ -293,23 +266,98 @@ Cada comando de verdade é uma linha: `docker compose exec db psql -U otilc -d o
 
 ## 8. Resultado para enviar à Bússola
 
-| Caso | O que prova                                    | OK / FALHA / não executável | Observações (sintoma, log, código HTTP; nunca segredo) |
-| ---- | ---------------------------------------------- | --------------------------- | ------------------------------------------------------ |
-| 3.4  | método de aprovar Pix no sandbox que funcionou |                             |                                                        |
-| a    | smoke test local                               |                             |                                                        |
-| b    | primeiro admin e login                         |                             |                                                        |
-| c    | pedido e Pix gerado                            |                             |                                                        |
-| d    | Pix aprovado → webhook → PAID                  |                             | disparou: painel / notification_url / os dois          |
-| e    | expiração e Pix cancelado                      |                             |                                                        |
-| f    | webhook perdido → conciliação                  |                             |                                                        |
-| g    | pago depois da expiração → alerta              |                             |                                                        |
-| h-1  | assinatura inválida → 401                      |                             |                                                        |
-| h-2  | simulação do painel → 200                      |                             |                                                        |
-| i    | admin marca enviado                            |                             |                                                        |
+| Caso | O que prova                                     | OK / FALHA / não executável | Observações (sintoma, log, código HTTP; nunca segredo) |
+| ---- | ----------------------------------------------- | --------------------------- | ------------------------------------------------------ |
+| a    | smoke test local                                |                             |                                                        |
+| b    | primeiro admin e login                          |                             |                                                        |
+| c    | pedido e Pix gerado                             |                             |                                                        |
+| d    | (bloco final) Pix pago → webhook → PAID         |                             | disparou: painel / notification_url / os dois          |
+| e    | expiração e Pix cancelado                       |                             |                                                        |
+| f    | (bloco final) webhook perdido → conciliação     |                             |                                                        |
+| g    | (bloco final) pago depois da expiração → alerta |                             |                                                        |
+| h-1  | assinatura inválida → 401                       |                             |                                                        |
+| h-2  | simulação do painel → 200                       |                             |                                                        |
+| i    | admin marca enviado                             |                             |                                                        |
 
 Também envie: formato real do `x-signature`/`x-request-id` que chegou (sem o segredo), o prefixo do Access Token de teste e qualquer comportamento diferente do esperado.
 
-## 9. Links oficiais
+## 9. Bloco final: Pix real de cerca de R$ 1 (credenciais de produção)
+
+> **ATENÇÃO. Faça este bloco só depois de fechar as seções 1 a 8.**
+>
+> - Aqui entram as credenciais de **PRODUÇÃO** do Mercado Pago, da conta do **seu próprio** Mercado Pago (**não** a da conta do cliente nem de ninguém mais). Pagamento real: o dinheiro (cerca de R$ 1) sai da sua conta bancária e cai na sua conta do Mercado Pago, com a tarifa do Mercado Pago.
+> - Elas ficam **somente** no `apps/api/.env` local. Nada de commit, chat, print com o token à mostra, Render, Vercel ou qualquer deploy.
+> - A API continua em `localhost`, com `NODE_ENV` de desenvolvimento, atrás do túnel. **Enquanto o túnel estiver de pé, toda a API local fica acessível na internet** (inclusive o login do admin): use uma senha de teste forte, suba o túnel só quando for usar e derrube-o ao terminar o bloco.
+> - Ao fim, volte às credenciais de teste (9.5) e revogue ou troque as de produção (9.6).
+
+Este bloco cobre os casos **d, f e g**, que exigem um Pix aprovado.
+
+### 9.1 Pedido de cerca de R$ 1, sem mudar código
+
+O preço sempre vem do banco (`priceCents`) e o `ORDER_HOLD_MINUTES` mínimo é 5; nenhum valor mínimo de pedido é imposto pela loja. Então crie um **produto de teste** de R$ 1,00 pelo painel do admin local (a sessão do caso b é `OWNER`):
+
+1. Confira o slug de uma categoria: `docker compose exec db psql -U otilc -d otilc -c "SELECT slug FROM categories"` (o catálogo do Drop 00 traz `tenis`, `camisetas`, `calcas`, `casacos`, `bones`; use o que o `SELECT` mostrar).
+2. Em <http://localhost:3000/admin/products/new> preencha: Nome `Produto de teste Pix`, Slug `produto-de-teste-pix`, Categoria (slug) `camisetas` (ou o do passo 1), Preço em centavos **`100`**, Status **`ACTIVE`**. Os outros campos podem ficar vazios; “Condição”, se pedir, `10`. Salve (“Salvar produto”).
+3. Na tela do produto, em “Nova variação”, crie `sku` `TESTE-PIX-1`, `size` `U`, `stock` `5` (use mais estoque do que os 3 pedidos dos casos d, f e g; cada pedido reserva 1 unidade até pagar ou expirar).
+4. Na loja, o produto aparece em <http://localhost:3000/produto/produto-de-teste-pix>. O total do pedido deve ser **R$ 1,00**. O menor valor que o Pix do Mercado Pago aceita **não foi confirmado**: se a criação falhar com R$ 1,00 (veja o log da API, `Mercado Pago respondeu NNN`), suba o preço para `500` (R$ 5,00) e anote.
+5. No fim, para tirar o produto da vitrine: altere o status para `DRAFT` (a API não tem exclusão de produto).
+
+### 9.2 Credenciais de produção e webhook de produção
+
+1. No painel do Mercado Pago ([Suas integrações](https://www.mercadopago.com.br/developers/panel/app)), na **mesma** aplicação, abra **Credenciais** e selecione o ambiente de **Produção** (ativar produção pode pedir dados da conta; siga o painel). Copie o **Access Token de produção**. Não cole em nenhum lugar fora do `apps/api/.env`.
+2. Em **Webhooks → Configurar notificações**, preencha a **URL modo produção** com `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago`, marque **Pagamentos** e salve. Revele a **assinatura secreta de produção** (ela é **diferente** da de teste).
+3. Anote os valores antigos (de teste) em um bloco de notas **fora do repositório**, só para o passo 9.5.
+
+### 9.3 Trocar o `.env` e subir
+
+No `apps/api/.env` substitua `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` pelos de **produção** (os placeholders de exemplo da seção 4 mostram o formato). `MP_NOTIFICATION_URL`, `ORDER_HOLD_MINUTES=5` e `PAYMENT_RECONCILIATION_INTERVAL_MS=30000` continuam como estão. Pare a API (Ctrl+C), rode `npm run dev` e suba o túnel (`ngrok http 3333`). Use sempre o produto `produto-de-teste-pix`, com o seu e-mail real no pedido (ele fica só no banco local).
+
+### 9.4 Casos
+
+**d) Pix pago → webhook → pedido `PAID`**
+
+- **Ação:** crie o pedido (caso c, com o produto de R$ 1,00). Com a página do pedido aberta, pague o Pix copia e cola pelo app do seu banco.
+- **Esperado (ngrok):** em <http://127.0.0.1:4040> aparece `POST /api/webhooks/mercadopago?data.id=<id>&type=payment` com resposta `200`. Anote os headers `x-signature` e `x-request-id` (sem copiar o segredo).
+- **Esperado (tela):** “Pagamento confirmado”. A página consulta a API a cada 5 s e a API consulta o Mercado Pago no máximo a cada 20 s, então a tela pode atualizar **sem** o webhook. Quem prova o webhook é a consulta abaixo.
+- **Esperado (banco):** `orders.status = PAID`; `payments.status = APPROVED` com `approved_at` preenchido; `variants.stock` caiu 1 e `reserved` voltou; **`payment_notifications` tem ao menos uma linha** para o `provider_payment_id`.
+- **Duplicatas:** conte as linhas de `payment_notifications` desse pagamento e as requisições em `:4040`. Anote se disparou só o webhook do painel, só a `notification_url` do pagamento ou os dois (uma linha por `x-request-id` diferente). O segundo é processado sem efeito (`already_approved`).
+- **Resultado:** [ ] OK [ ] FALHA — disparou: [ ] painel [ ] notification_url [ ] os dois
+
+**f) Webhook perdido → conciliação**
+
+- **Ação:** crie um pedido novo e **feche a aba `/pedido/<id>`** (a consulta da página também confirmaria o pagamento e mascararia este teste). Derrube o túnel (Ctrl+C no ngrok). Pague o Pix. Espere. Suba o túnel de novo só depois do resultado.
+- **Esperado (log da API):** em até cerca de 30 s depois de passados 2 minutos da criação do Pix: `Conciliação: 1 pagamento(s) conferido(s), 0 com falha.`
+- **Esperado (banco):** `orders.status = PAID` e `payments.status = APPROVED`, sem linha nova em `payment_notifications` para esse pagamento.
+- **Obs.:** o Mercado Pago reenvia webhooks não confirmados (a documentação cita novas tentativas a cada 15 minutos); se um reenvio chegar depois, ele não muda nada.
+- **Resultado:** [ ] OK [ ] FALHA
+
+**g) Pix pago depois da expiração → `PAID_AFTER_EXPIRY` (se der)**
+
+É o caso mais difícil de armar: o job cancela o Pix cerca de 1 minuto depois de o pedido expirar, então a janela é curta. A saída é manter a API parada. O Pix real vale 31 minutos; o pedido, 5.
+
+- **Ação:** crie o pedido novo. **Pare a API** (Ctrl+C no `npm run dev`) logo depois de criado. Espere passar 6 minutos. Pague o Pix. Suba a API de novo.
+- **Esperado (log da API):** um aviso (`warn`) de alerta com o id do pagamento, o id do pedido e `PAID_AFTER_EXPIRY`, e a linha `1 pedido(s) expirado(s); estoque liberado.` (a ordem entre as duas pode variar).
+- **Esperado (banco):** `orders.status = EXPIRED` (o pedido **não** vira `PAID`); `payments.status = APPROVED`; uma linha em `payment_alerts` com `alert = PAID_AFTER_EXPIRY`.
+- **Depois:** o Mercado Pago não devolve o dinheiro sozinho. O estorno é manual, no painel do Mercado Pago (o contrato da API chama isso de estorno manual).
+- **Resultado:** [ ] OK [ ] FALHA [ ] não deu para armar
+
+### 9.5 Voltar às credenciais de teste
+
+1. Pare a API e derrube o túnel.
+2. No `apps/api/.env`, volte `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` para os valores de **teste** (ou apague as duas linhas, e o Pix fica desligado).
+3. No painel do Mercado Pago, esvazie a **URL modo produção** do webhook (ou aponte para outra) para o Mercado Pago parar de chamar o túnel.
+4. Apague as linhas de `ORDER_HOLD_MINUTES` e `PAYMENT_RECONCILIATION_INTERVAL_MS` do `.env` (ou restaure 30 e 300000) e coloque o produto de teste em `DRAFT` (9.1, passo 5).
+
+### 9.6 Último passo: revogar ou trocar as credenciais de produção
+
+O token de produção passou pelo seu terminal e pelo `.env` local. Não o deixe valendo:
+
+1. Em **Suas integrações → sua aplicação → Credenciais (Produção)**, escolha o par de credenciais, o menu de três pontos e **Renovar → Renovar agora**. Segundo a documentação, as duas credenciais do par são renovadas e as antigas **continuam valendo por até 12 horas**, então a troca não é imediata ([Renovação de credenciais](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/additional-content/security/oauth/renewal), [Como renovo as credenciais?](https://www.mercadopago.com.br/ajuda/como-renovo-credenciais_20215)). Não li essas páginas por inteiro: confirme o menu no painel.
+2. Se você não vai usar a aplicação em produção, não guarde o token novo em lugar nenhum.
+3. Se o token chegou a ser exposto (colado em chat, commit, print), renove na hora e verifique em **Seus pagamentos** se há movimentação que você não reconhece. Boas práticas oficiais: [Mantenha suas credenciais seguras](https://www.mercadopago.com.br/developers/pt/docs/checkout-api/best-practices/credentials-best-practices/secure-credentials).
+4. Confira que `git status` não mostra o `.env` (ele está no `.gitignore`).
+
+## 10. Links oficiais
 
 ngrok:
 
