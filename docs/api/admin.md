@@ -57,20 +57,20 @@ Comuns a todas as rotas autenticadas: `401` sem sessão válida, `403` por papel
 
 ## Endpoints
 
-| Método   | Rota                               | Papel mínimo | Ação                 | Corpo / query                  | Sucesso                                  | Erros                        |
-| -------- | ---------------------------------- | ------------ | -------------------- | ------------------------------ | ---------------------------------------- | ---------------------------- |
-| `POST`   | `/api/admin/session`               | público      | —                    | `adminLoginSchema`             | `200` `AdminUserDto` + cookie            | 400, 401, 403, 429           |
-| `DELETE` | `/api/admin/session`               | STAFF        | —                    | —                              | `204` + cookie limpo                     | 401, 403                     |
-| `GET`    | `/api/admin/me`                    | STAFF        | —                    | —                              | `200` `AdminUserDto`                     | 401                          |
-| `GET`    | `/api/admin/products`              | STAFF        | `product:read`       | —                              | `200` `AdminProductDto[]`                | 401, 403                     |
-| `GET`    | `/api/admin/products/:id`          | STAFF        | `product:read`       | —                              | `200` `AdminProductDto`                  | 400, 401, 403, 404           |
-| `POST`   | `/api/admin/products`              | OWNER        | `product:create`     | `adminProductInputSchema`      | `201` `AdminProductDto`                  | 400, 401, 403, 409, 422      |
-| `PATCH`  | `/api/admin/products/:id`          | OWNER        | `product:update`     | `adminProductPatchSchema`      | `200` `AdminProductDto`                  | 400, 401, 403, 404, 409, 422 |
-| `POST`   | `/api/admin/products/:id/variants` | OWNER        | `variant:create`     | `adminVariantInputSchema`      | `201` `AdminVariantDto`                  | 400, 401, 403, 404, 409      |
-| `PUT`    | `/api/admin/variants/:id/stock`    | STAFF        | `stock:update`       | `adminStockUpdateSchema`       | `200` `AdminVariantDto`                  | 400, 401, 403, 404, 409      |
-| `GET`    | `/api/admin/orders`                | STAFF        | `order:read`         | query `adminOrderQuerySchema`  | `200` `Paginated<AdminOrderListItemDto>` | 400, 401, 403                |
-| `GET`    | `/api/admin/orders/:id`            | STAFF        | `order:read`         | —                              | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404           |
-| `PATCH`  | `/api/admin/orders/:id/status`     | STAFF        | `order:updateStatus` | `adminOrderStatusUpdateSchema` | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404, 409      |
+| Método   | Rota                               | Papel mínimo | Ação                 | Corpo / query                  | Sucesso                                  | Erros                             |
+| -------- | ---------------------------------- | ------------ | -------------------- | ------------------------------ | ---------------------------------------- | --------------------------------- |
+| `POST`   | `/api/admin/session`               | público      | —                    | `adminLoginSchema`             | `200` `AdminUserDto` + cookie            | 400, 401, 403, 429                |
+| `DELETE` | `/api/admin/session`               | STAFF        | —                    | —                              | `204` + cookie limpo                     | 401, 403                          |
+| `GET`    | `/api/admin/me`                    | STAFF        | —                    | —                              | `200` `AdminUserDto`                     | 401                               |
+| `GET`    | `/api/admin/products`              | STAFF        | `product:read`       | —                              | `200` `AdminProductDto[]`                | 401, 403                          |
+| `GET`    | `/api/admin/products/:id`          | STAFF        | `product:read`       | —                              | `200` `AdminProductDto`                  | 400, 401, 403, 404                |
+| `POST`   | `/api/admin/products`              | OWNER        | `product:create`     | `adminProductInputSchema`      | `201` `AdminProductDto`                  | 400, 401, 403, 409, 422           |
+| `PATCH`  | `/api/admin/products/:id`          | OWNER        | `product:update`     | `adminProductPatchSchema`      | `200` `AdminProductDto`                  | 400, 401, 403, 404, 409, 422      |
+| `POST`   | `/api/admin/products/:id/variants` | OWNER        | `variant:create`     | `adminVariantInputSchema`      | `201` `AdminVariantDto`                  | 400, 401, 403, 404, 409           |
+| `PUT`    | `/api/admin/variants/:id/stock`    | STAFF        | `stock:update`       | `adminStockUpdateSchema`       | `200` `AdminVariantDto`                  | 400, 401, 403, 404, 409           |
+| `GET`    | `/api/admin/orders`                | STAFF        | `order:read`         | query `adminOrderQuerySchema`  | `200` `Paginated<AdminOrderListItemDto>` | 400, 401, 403                     |
+| `GET`    | `/api/admin/orders/:id`            | STAFF        | `order:read`         | —                              | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404                |
+| `PATCH`  | `/api/admin/orders/:id/status`     | STAFF        | `order:updateStatus` | `adminOrderStatusUpdateSchema` | `200` `AdminOrderDetailDto`              | 400, 401, 403, 404, 409, 502, 503 |
 
 ## Detalhes por endpoint
 
@@ -252,11 +252,45 @@ Query: `status` (opcional, um de `PENDING_PAYMENT`, `PAID`, `CANCELED`, `EXPIRED
 
 | De                | Para       | Efeito no estoque da variação                            | Efeito no pagamento                      |
 | ----------------- | ---------- | -------------------------------------------------------- | ---------------------------------------- |
-| `PENDING_PAYMENT` | `PAID`     | `reserved -= qtd` e `stock -= qtd` (a unidade é vendida) | nenhum (só registra o status)            |
-| `PENDING_PAYMENT` | `CANCELED` | `reserved -= qtd` (volta a ficar disponível)             | nenhum (não houve pagamento)             |
+| `PENDING_PAYMENT` | `PAID`     | `reserved -= qtd` e `stock -= qtd` (a unidade é vendida) | Pix `PENDING` cancelado antes (abaixo)   |
+| `PENDING_PAYMENT` | `CANCELED` | `reserved -= qtd` (volta a ficar disponível)             | Pix `PENDING` cancelado antes (abaixo)   |
 | `PAID`            | `SHIPPED`  | nenhum                                                   | nenhum                                   |
 | `PAID`            | `CANCELED` | `stock += qtd` (a peça volta ao estoque)                 | **não estorna**: o estorno é feito à mão |
 
 `PAID → CANCELED` devolve a peça ao estoque, mas **não** devolve o dinheiro ao cliente. Enquanto não existir integração de pagamento, o estorno é manual, feito pelo dono fora da loja.
 
 `EXPIRED` só é aplicado pelo job de expiração, nunca pelo painel. A mudança de status e o ajuste de estoque acontecem na mesma transação, com `UPDATE … WHERE status = <de>`: se o job ou outro admin mudou o pedido no meio, a resposta é `409` e nada é alterado.
+
+#### Cancelamento do Pix ao marcar pago ou cancelar ([spec-019](../../specs/019-cancelar-pix-ao-marcar-pago.md))
+
+Saindo de `PENDING_PAYMENT` (para `PAID` ou `CANCELED`), se o pedido tem um Pix `PENDING`, ele é cancelado no Mercado Pago **antes** de o status mudar no banco, fora de qualquer transação (o mesmo `PUT` do cancelamento na expiração, ver [pagamentos.md](pagamentos.md)). O QR antigo deixa de ser pagável e não há cobrança dupla. Pedido sem Pix `PENDING` não chama o Mercado Pago e segue como antes.
+
+| Situação                                                                                    | Resposta | O que muda                                                                              |
+| ------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
+| Mercado Pago confirma o cancelamento                                                        | `200`    | cobrança `CANCELLED`, depois a mudança de status e o estoque da tabela acima            |
+| Mercado Pago responde que o Pix já foi pago (o cliente pagou naquele instante)              | `409`    | a aprovação é aplicada como no webhook: pedido `PAID` pelo Pix, estoque baixado uma vez |
+| Falha no cancelamento (rede, tempo esgotado, erro do Mercado Pago, cobrança ainda pendente) | `502`    | nada; aviso no log com o id do pedido e do pagamento                                    |
+| Pix `PENDING` no banco, mas o Pix está desligado neste ambiente                             | `503`    | nada                                                                                    |
+| Outro Pix gerado pelo cliente entre o cancelamento e a gravação                             | `409`    | nada; tentar de novo cancela o novo Pix                                                 |
+
+```json
+{ "statusCode": 409, "message": "Este pedido já foi pago pelo Pix.", "error": "Conflict" }
+```
+
+```json
+{
+  "statusCode": 502,
+  "message": "Não foi possível cancelar o Pix no Mercado Pago. Tente de novo.",
+  "error": "Bad Gateway"
+}
+```
+
+```json
+{
+  "statusCode": 503,
+  "message": "Este pedido tem um Pix pendente, mas o Pix está desligado neste ambiente: não é possível cancelá-lo no Mercado Pago.",
+  "error": "Service Unavailable"
+}
+```
+
+`PAID → SHIPPED` e `PAID → CANCELED` não chamam o Mercado Pago (não há Pix pendente; estorno é manual).

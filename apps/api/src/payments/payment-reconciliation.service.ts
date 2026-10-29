@@ -19,8 +19,26 @@ export interface ReconciliationResult {
 }
 
 /**
+ * Resultado do cancelamento do Pix pendente de um pedido:
+ * - `no_charge`: o pedido não tem Pix PENDING; nada foi chamado;
+ * - `pix_disabled`: tem Pix PENDING, mas o Pix está desligado neste ambiente;
+ * - `cancelled`: a cobrança foi encerrada (CANCELLED, ou REJECTED/REFUNDED pela resposta);
+ * - `approved`: o Mercado Pago respondeu que o Pix já foi pago; o `syncFrom` aplicou a aprovação;
+ * - `failed`: o PUT ou a transição falhou, ou a cobrança continua PENDING (vai para o log).
+ */
+export type CancelChargeResult = 'no_charge' | 'pix_disabled' | 'cancelled' | 'approved' | 'failed';
+
+/** Colunas da cobrança que o cancelamento usa. */
+const chargeColumns = {
+  id: payments.id,
+  orderId: payments.orderId,
+  providerPaymentId: payments.providerPaymentId,
+};
+
+/**
  * Conciliação periódica do Pix (spec-015): confere com o Mercado Pago os pagamentos que o webhook
- * e a verificação sob demanda podem ter perdido, e cancela no Mercado Pago o Pix de pedido expirado.
+ * e a verificação sob demanda podem ter perdido, e cancela no Mercado Pago o Pix de pedido expirado
+ * ou que o painel vai marcar como pago ou cancelado (spec-019).
  *
  * Nenhuma chamada ao Mercado Pago acontece com transação ou trava aberta: a reivindicação é um
  * único UPDATE (com `FOR UPDATE SKIP LOCKED` e `last_checked_at = now()`) que termina antes das
@@ -160,19 +178,59 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
   async cancelForExpiredOrders(orderIds: string[]): Promise<void> {
     if (!this.provider || orderIds.length === 0) return;
     const pending = await this.db
-      .select({ providerPaymentId: payments.providerPaymentId })
+      .select(chargeColumns)
       .from(payments)
       .where(and(inArray(payments.orderId, orderIds), eq(payments.status, 'PENDING')));
 
-    for (const { providerPaymentId } of pending) {
-      try {
-        const remote = await this.provider.cancelPayment(providerPaymentId);
-        await this.transition.syncFrom(remote);
-      } catch (err) {
-        this.logger.warn(
-          `Cancelamento do Pix ${providerPaymentId} falhou: ${(err as Error).message}`,
-        );
-      }
+    for (const charge of pending) await this.cancelCharge(this.provider, charge);
+  }
+
+  /**
+   * Cancela no Mercado Pago o Pix pendente de um pedido, antes de o painel marcá-lo como pago ou
+   * cancelado (spec-019). Roda fora de qualquer transação; quem chama decide o que fazer com o
+   * resultado. Sem `provider` e com Pix pendente no banco, devolve `pix_disabled` (o painel recusa).
+   */
+  async cancelPendingCharge(orderId: string): Promise<CancelChargeResult> {
+    const [charge] = await this.db
+      .select(chargeColumns)
+      .from(payments)
+      .where(and(eq(payments.orderId, orderId), eq(payments.status, 'PENDING')));
+    if (!charge) return 'no_charge';
+    if (!this.provider) return 'pix_disabled';
+    return this.cancelCharge(this.provider, charge);
+  }
+
+  /**
+   * PUT de cancelamento e transição pela resposta (`syncFrom`). O resultado vem do status local
+   * depois da transição: só uma cobrança encerrada garante que o QR não é mais pagável.
+   * Falha vai para o log com os ids do pagamento e do pedido, nunca com dados do cliente.
+   */
+  private async cancelCharge(
+    provider: PixProvider,
+    charge: { id: string; orderId: string; providerPaymentId: string },
+  ): Promise<CancelChargeResult> {
+    const { providerPaymentId, orderId } = charge;
+    try {
+      const remote = await provider.cancelPayment(providerPaymentId);
+      await this.transition.syncFrom(remote);
+    } catch (err) {
+      this.logger.warn(
+        `Cancelamento do Pix ${providerPaymentId} falhou (pedido ${orderId}): ${(err as Error).message}`,
+      );
+      return 'failed';
     }
+    const after = await this.db.query.payments.findFirst({
+      where: eq(payments.id, charge.id),
+      columns: { status: true },
+    });
+    if (after?.status === 'APPROVED') return 'approved';
+    if (!after || after.status === 'PENDING') {
+      // Resposta que não encerra a cobrança (ex.: status desconhecido): o QR pode continuar vivo.
+      this.logger.warn(
+        `Cancelamento do Pix ${providerPaymentId} falhou (pedido ${orderId}): a cobrança continua pendente.`,
+      );
+      return 'failed';
+    }
+    return 'cancelled';
   }
 }

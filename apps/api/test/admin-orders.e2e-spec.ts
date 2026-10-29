@@ -6,7 +6,7 @@ import { AdminAuthService } from '../src/admin-auth/admin-auth.service';
 import { createAdminUser } from '../src/admin-auth/new-admin';
 import { AdminOrdersService } from '../src/admin-orders/admin-orders.service';
 import { SESSION_COOKIE } from '../src/admin-auth/session-token';
-import { orders, products, variants } from '../src/db/schema';
+import { orders, payments, products, variants } from '../src/db/schema';
 import { OrdersService } from '../src/orders/orders.service';
 import { resetData, setupTestApp, teardownTestApp, type TestContext } from './setup';
 
@@ -310,6 +310,33 @@ describe('Admin: pedidos e mudança de status (integração com Postgres)', () =
       );
       expect(await stockOf(v.id)).toEqual({ stock: 10, reserved: 1 });
     });
+
+    it.each<OrderStatus>(['PAID', 'CANCELED'])(
+      'Pix desligado com cobrança PENDING no banco: → %s é 503 e nada muda (spec-019)',
+      async (to) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const id = await placeOrder([{ variantId: v.id, quantity: 1 }]);
+        // Cobrança gerada quando o Pix estava ligado; este app sobe sem MP_ACCESS_TOKEN.
+        await ctx.db.insert(payments).values({
+          orderId: id,
+          providerPaymentId: '1999999',
+          status: 'PENDING',
+          amountCents: v.price,
+          expiresAt: new Date(Date.now() + 30 * 60_000),
+        });
+
+        const res = await setStatus(id, to).expect(503);
+
+        expect(res.body.message).toMatch(/Pix está desligado/);
+        expect(await statusOf(id)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        const [payment] = await ctx.db
+          .select({ status: payments.status })
+          .from(payments)
+          .where(eq(payments.orderId, id));
+        expect(payment.status).toBe('PENDING');
+      },
+    );
 
     it('pagar e expirar ao mesmo tempo: cada pedido termina PAID ou EXPIRED, nunca os dois', async () => {
       const ROUNDS = 8;

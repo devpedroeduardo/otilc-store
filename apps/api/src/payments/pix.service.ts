@@ -30,6 +30,8 @@ export class PixService {
    * O valor é sempre o total do pedido no banco. Duas chamadas simultâneas usam a mesma chave de
    * idempotência (pedido + tentativa), recebem o mesmo pagamento do Mercado Pago e só uma grava:
    * o UNIQUE de `provider_payment_id` e o índice de uma PENDING por pedido barram a outra.
+   * A gravação revalida o pedido com ele travado; se ele deixou de ser pagável enquanto o Mercado
+   * Pago criava o Pix, nada é gravado, o Pix é cancelado lá e a resposta é ORDER_NOT_PAYABLE.
    */
   async createCharge(orderId: string): Promise<{ charge: PixChargeDto; created: boolean }> {
     const config = pixConfig(this.env);
@@ -81,20 +83,40 @@ export class PixService {
       throw pixError('PIX_UNAVAILABLE');
     }
 
-    const [inserted] = await this.db
-      .insert(payments)
-      .values({
-        orderId,
-        providerPaymentId: remote.id,
-        status,
-        amountCents: order.totalCents,
-        qrCode: remote.qrCode,
-        qrCodeBase64: remote.qrCodeBase64,
-        expiresAt,
-      })
-      .onConflictDoNothing()
-      .returning();
-    if (inserted) return { charge: toDto(inserted, order), created: true };
+    // Grava com o pedido travado (pedido → cobrança, a ordem do `PaymentTransitionService`) e só se
+    // ele ainda pode ser pago: o painel trava o mesmo pedido ao marcar pago ou cancelar (spec-019),
+    // então ou a cobrança entra antes e o painel a vê, ou o painel grava antes e ela não entra.
+    const saved = await this.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ status: orders.status, expiresAt: orders.expiresAt })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .for('update');
+      if (locked?.status !== 'PENDING_PAYMENT' || locked.expiresAt.getTime() <= Date.now()) {
+        return 'not_payable' as const;
+      }
+      const [row] = await tx
+        .insert(payments)
+        .values({
+          orderId,
+          providerPaymentId: remote.id,
+          status,
+          amountCents: order.totalCents,
+          qrCode: remote.qrCode,
+          qrCodeBase64: remote.qrCodeBase64,
+          expiresAt,
+        })
+        .onConflictDoNothing()
+        .returning();
+      return row;
+    });
+    if (saved === 'not_payable') {
+      // O pedido saiu de PENDING_PAYMENT (ou venceu) durante a criação: o Pix recém-criado no
+      // Mercado Pago é cancelado, já sem trava aberta. Falha só vai para o log (o Pix vence sozinho).
+      await this.cancelOrphan(orderId, remote.id);
+      throw pixError('ORDER_NOT_PAYABLE');
+    }
+    if (saved) return { charge: toDto(saved, order), created: true };
 
     // Outra chamada simultânea gravou primeiro.
     const existing =
@@ -146,6 +168,22 @@ export class PixService {
       }
     }
     return charge;
+  }
+
+  /** Cancela no Mercado Pago um Pix que não foi gravado. Ids no log, nunca dados do cliente. */
+  private async cancelOrphan(orderId: string, providerPaymentId: string): Promise<void> {
+    try {
+      const remote = await this.provider?.cancelPayment(providerPaymentId);
+      if (remote && remote.status !== 'cancelled') {
+        this.logger.warn(
+          `Pix ${providerPaymentId} do pedido ${orderId} não gravado ficou "${remote.status}" ao cancelar.`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Cancelamento do Pix ${providerPaymentId} falhou (pedido ${orderId}, não gravado): ${(err as Error).message}`,
+      );
+    }
   }
 
   private findPending(orderId: string) {
