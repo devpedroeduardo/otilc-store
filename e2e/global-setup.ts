@@ -15,7 +15,7 @@ export default async function globalSetup(): Promise<void> {
   await runMigrations(E2E_DATABASE_URL);
   await withDb(async (db) => {
     await seed(db);
-    await db.execute(sql`TRUNCATE admin_sessions, admin_users`);
+    await db.execute(sql`TRUNCATE payment_alerts, admin_sessions, admin_users`);
     for (const role of ['OWNER', 'STAFF'] as const) {
       const email = `${role.toLowerCase()}-e2e@example.test`;
       const password = randomBytes(24).toString('base64url');

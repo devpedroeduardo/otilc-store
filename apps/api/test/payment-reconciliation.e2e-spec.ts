@@ -1483,7 +1483,72 @@ describe('migrações 0005 (histórico de alertas) e 0006 (backoff da conciliaç
     }
   });
 
-  it('banco limpo: db:migrate aplica da 0000 à 0006 de uma vez e o alerta novo é gravável', async () => {
+  it('0007 sobre um banco com a 0006: alertas existentes ficam abertos; CHECK e FK de resolved_by', async () => {
+    await recreateScratch();
+    const dir = migrationsUpTo(6);
+    const { db, pool } = createDatabase(scratchUrl());
+    try {
+      await migrate(db, { migrationsFolder: dir });
+      const order = await insertOrder(db);
+      // Em SQL: o insert do Drizzle cita as colunas da 0007, que ainda não existem.
+      await db.execute(sql`
+        INSERT INTO payments (order_id, provider_payment_id, status, amount_cents, expires_at)
+        VALUES (${order.id}, '1', 'APPROVED', 1000, now())
+      `);
+      await db.execute(sql`
+        INSERT INTO payment_alerts (payment_id, alert)
+        SELECT id, 'PAID_AFTER_EXPIRY' FROM payments WHERE provider_payment_id = '1'
+      `);
+
+      await runMigrations(scratchUrl());
+
+      const [alert] = await db.select().from(paymentAlerts);
+      expect(alert).toMatchObject({
+        alert: 'PAID_AFTER_EXPIRY',
+        resolvedAt: null,
+        resolvedBy: null,
+      });
+      const { rows: index } = await db.execute<{ def: string }>(
+        sql`SELECT indexdef AS def FROM pg_indexes WHERE indexname = 'payment_alerts_open_created_idx'`,
+      );
+      expect(index).toHaveLength(1);
+      expect(index[0].def).toContain('WHERE (resolved_at IS NULL)');
+
+      await expect(
+        db
+          .update(paymentAlerts)
+          .set({ resolvedBy: randomUUID() })
+          .where(eq(paymentAlerts.id, alert.id)),
+      ).rejects.toMatchObject({
+        cause: { code: '23514', constraint: 'payment_alerts_resolved_by_needs_resolved_at' },
+      });
+      await expect(
+        db
+          .update(paymentAlerts)
+          .set({ resolvedAt: new Date(), resolvedBy: randomUUID() })
+          .where(eq(paymentAlerts.id, alert.id)),
+      ).rejects.toMatchObject({ cause: { code: '23503' } });
+
+      // Admin removido: a resolução continua, sem o autor.
+      const { rows: admins } = await db.execute<{ id: string }>(sql`
+        INSERT INTO admin_users (email, name, password_hash, role)
+        VALUES ('dono@example.test', 'Dono', 'teste-hash-ficticio', 'OWNER') RETURNING id
+      `);
+      await db
+        .update(paymentAlerts)
+        .set({ resolvedAt: new Date(), resolvedBy: admins[0].id })
+        .where(eq(paymentAlerts.id, alert.id));
+      await db.execute(sql`DELETE FROM admin_users WHERE id = ${admins[0].id}`);
+      const [after] = await db.select().from(paymentAlerts);
+      expect(after.resolvedAt).not.toBeNull();
+      expect(after.resolvedBy).toBeNull();
+    } finally {
+      await pool.end();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('banco limpo: db:migrate aplica da 0000 à 0007 de uma vez e o alerta novo é gravável', async () => {
     await recreateScratch();
     await runMigrations(scratchUrl());
     const { db, pool } = createDatabase(scratchUrl());
@@ -1491,7 +1556,7 @@ describe('migrações 0005 (histórico de alertas) e 0006 (backoff da conciliaç
       const { rows: applied } = await db.execute<{ total: number }>(
         sql`SELECT count(*)::int AS total FROM drizzle.__drizzle_migrations`,
       );
-      expect(applied).toEqual([{ total: 7 }]);
+      expect(applied).toEqual([{ total: 8 }]);
       const order = await insertOrder(db);
       const [payment] = await db
         .insert(payments)
