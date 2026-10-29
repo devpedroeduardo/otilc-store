@@ -22,5 +22,6 @@ COPY --from=build /repo/apps/api/drizzle apps/api/drizzle
 WORKDIR /repo/apps/api
 USER node
 EXPOSE 3333
-# Aplica as migrations e sobe a API.
-CMD ["sh", "-c", "node dist/db/migrate.js && node dist/main.js"]
+# Só sobe a API. As migrations rodam antes, uma vez por deploy: no Render pelo Pre-Deploy Command
+# (`node /repo/apps/api/dist/db/migrate.js`, ver render.yaml); local e CI com `npm run db:migrate`.
+CMD ["node", "dist/main.js"]

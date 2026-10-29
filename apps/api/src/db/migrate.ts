@@ -1,10 +1,16 @@
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import path from 'node:path';
-import { createDatabase } from './client';
+import { createDatabase, type DatabaseSslSource } from './client';
 
-/** Aplica as migrations SQL da pasta drizzle/. Usado no deploy, no CI e nos testes. */
-export async function runMigrations(url: string): Promise<void> {
-  const { db, pool } = createDatabase(url);
+/**
+ * Aplica as migrations SQL da pasta drizzle/. Usado no Pre-Deploy Command do Render, no CI e nos
+ * testes. Conecta com a mesma configuração (e o mesmo SSL) da API.
+ */
+export async function runMigrations(
+  url: string,
+  source: DatabaseSslSource = process.env,
+): Promise<void> {
+  const { db, pool } = createDatabase(url, source);
   try {
     await migrate(db, { migrationsFolder: path.join(__dirname, '..', '..', 'drizzle') });
   } finally {
