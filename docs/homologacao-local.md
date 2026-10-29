@@ -188,7 +188,7 @@ Marque OK ou FALHA em cada um e preencha a tabela da seção 8. Para as consulta
 ### e) Pedido não pago expira e o Pix é cancelado
 
 - **Ação:** crie um pedido como no caso c e **não pague**. Deixe passar o prazo (`ORDER_HOLD_MINUTES=5`) mais o intervalo do job (a cada 60 s): cerca de 6 minutos.
-- **Esperado (log da API):** `1 pedido(s) expirado(s); estoque liberado.`
+- **Esperado (log da API):** `N pedido(s) expirado(s); estoque liberado.` Com só este pedido vencido, `N` é 1; se outro pedido pendente (por exemplo, o do caso c) vencer na mesma rodada do job, `N` conta os dois.
 - **Esperado (tela):** a página do pedido passa a “Pedido expirado” aos 5 minutos, pela contagem do navegador, **antes** de o job rodar. A prova da expiração é o log e o banco, não a tela.
 - **Esperado (banco):** `orders.status = EXPIRED`; `variants.reserved` voltou ao valor de antes; `payments.status = CANCELLED`. A API só registra no log quando o cancelamento **falha** (`Cancelamento do Pix <id> falhou: ...`); ausência dessa linha e `CANCELLED` no banco são o sinal de que o `PUT` no Mercado Pago foi aceito.
 - **Esperado (Mercado Pago):** o pagamento aparece como cancelado se você consultar `GET /v1/payments/<id>` com o seu token (ou no painel, se houver tela de pagamentos de teste).
@@ -215,7 +215,7 @@ h-2, só se o painel tiver o botão de simular notificação (3.3): dispare-o pa
 
 ### i) Admin marca o pedido como enviado
 
-Precisa de um pedido `PAID`. No sandbox o Pix não é aprovado (3.4), então use o botão “Marcar pago” do painel num pedido do caso c, só para chegar ao botão de envio; isso **não** prova o Pix. (Com o pedido pago de verdade do bloco final, repita este passo se quiser.)
+Precisa de um pedido `PAID`. No sandbox o Pix não é aprovado (3.4), então crie um **pedido novo** (como no caso c) e use o botão “Marcar pago” do painel **antes de ele vencer** (5 minutos; o painel e a API recusam marcar pago um pedido vencido, como o do caso e), só para chegar ao botão de envio; isso **não** prova o Pix. (Com o pedido pago de verdade do bloco final, repita este passo se quiser.)
 
 - **Ação:** em `/admin/orders`, abra o pedido pago e clique em “Marcar enviado”.
 - **Esperado:** `orders.status = SHIPPED`; o botão some.
@@ -329,8 +329,8 @@ No `apps/api/.env` substitua `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` pelos de **
 
 **f) Webhook perdido → conciliação**
 
-- **Ação:** crie um pedido novo (caso c). Quando o QR aparecer, **copie o Pix copia e cola** e guarde (o código só existe nessa aba, e reabrir `/pedido/<id>` faria a página consultar o Mercado Pago e mascarar o teste). Feche a aba. Derrube o túnel (Ctrl+C no ngrok). **Pague em até 3 minutos depois de criar o pedido**, com o código copiado. Espere. Suba o túnel de novo só depois do resultado.
-- **Por que 3 minutos:** com `ORDER_HOLD_MINUTES=5` o pedido vence aos 5 min. A conciliação roda a cada 30 s e só olha Pix com mais de 2 min, então confirma até ~30 s depois do pagamento, nunca antes de 2 min da criação do Pix, e antes do vencimento. Se o pagamento passar do prazo, o resultado certo é o do caso g (`PAID_AFTER_EXPIRY`), não o deste: refaça com outro pedido. Alternativa: ponha `ORDER_HOLD_MINUTES=30` no `apps/api/.env` e reinicie a API antes deste caso, e volte para `5` (reiniciando) antes do caso g.
+- **Ação:** crie um pedido novo (caso c). Quando o QR aparecer, **copie o Pix copia e cola** e guarde (o código só existe nessa aba, e reabrir `/pedido/<id>` faria a página consultar o Mercado Pago e mascarar o teste). Feche a aba. Derrube o túnel (Ctrl+C no ngrok). **Pague entre 2 e 3 minutos depois de criar o pedido**, com o código copiado. Espere. Suba o túnel de novo só depois do resultado.
+- **Por que 3 minutos:** com `ORDER_HOLD_MINUTES=5` o pedido vence aos 5 min. A conciliação roda a cada 30 s e só olha Pix com mais de 2 min, então confirma até ~30 s depois dos 2 min (nunca antes de 2 min da criação do Pix) e antes do vencimento aos 5 min. Pagar antes dos 2 min também funciona, mas a conciliação só confirma quando o Pix completar 2 min. Se o pagamento passar do prazo, o resultado certo é o do caso g (`PAID_AFTER_EXPIRY`), não o deste: refaça com outro pedido. Alternativa: ponha `ORDER_HOLD_MINUTES=30` no `apps/api/.env` e reinicie a API antes deste caso, e volte para `5` (reiniciando) antes do caso g.
 - **Esperado (banco, é o critério do OK):** `orders.status = PAID` e `payments.status = APPROVED`, sem linha nova em `payment_notifications` para esse pagamento.
 - **Log da API:** a linha `Conciliação: N pagamento(s) conferido(s), 0 com falha.` aparece a cada rodada que confere alguma cobrança `PENDING` (inclusive antes de você pagar) e **não serve de prova**.
 - **Obs.:** o Mercado Pago reenvia webhooks não confirmados (a documentação cita novas tentativas a cada 15 minutos); se um reenvio chegar depois, ele não muda nada.
@@ -340,7 +340,7 @@ No `apps/api/.env` substitua `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` pelos de **
 
 É o caso mais difícil de armar: o job cancela o Pix cerca de 1 minuto depois de o pedido expirar, então a janela é curta. A saída é manter a API parada. O Pix real vale 31 minutos; o pedido, 5.
 
-- **Ação:** crie o pedido novo; quem cria o Pix é a página ao carregar. Quando o QR aparecer, **copie o Pix copia e cola**: aos 5 min a tela troca para “Pedido expirado” e o QR some, e com a API parada recarregar não traz o código de volta. Só então **pare a API** (Ctrl+C no `npm run dev`, que derruba a API e a loja juntas). Espere passar 6 minutos. Pague com o código copiado. Rode `npm run dev` de novo.
+- **Ação:** crie o pedido novo; quem cria o Pix é a página ao carregar. Quando o QR aparecer, **copie o Pix copia e cola**: aos 5 min a tela troca para “Pedido expirado” e o QR some, e com a API parada recarregar não traz o código de volta. Em seguida **pare a API na hora**, antes dos 5 minutos do prazo (Ctrl+C no `npm run dev`, que derruba a API e a loja juntas): o job de expiração roda a cada 60 s e, se pegar o pedido vencido com a API no ar, cancela o Pix no Mercado Pago e o pagamento deixa de ser possível. Espere passar 6 minutos. Pague com o código copiado. Rode `npm run dev` de novo.
 - **Esperado (log da API), nesta ordem:** primeiro (cerca de 30 s depois de subir) o aviso `Pagamento <id> do pedido <id>: alerta PAID_AFTER_EXPIRY.` (com os ids reais); depois (cerca de 60 s) `1 pedido(s) expirado(s); estoque liberado.`
 - **Esperado (banco):** `orders.status = EXPIRED` (o pedido **não** vira `PAID`); `payments.status = APPROVED`; uma linha em `payment_alerts` com `alert = PAID_AFTER_EXPIRY`.
 - **Depois:** o Mercado Pago não devolve o dinheiro sozinho. O estorno é manual, no painel do Mercado Pago (o contrato da API chama isso de estorno manual).
