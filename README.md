@@ -93,6 +93,8 @@ npm run dev                             # API em :3333 e loja em :3000
 
 Para subir tudo em contêineres: `docker compose up --build`.
 
+Para testar o Pix de ponta a ponta na sua máquina (Mercado Pago sandbox e webhook por túnel), siga o roteiro em [docs/homologacao-local.md](docs/homologacao-local.md).
+
 ### Endpoints
 
 | Método | Rota                  | Descrição                                                 |

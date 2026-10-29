@@ -41,7 +41,7 @@ O drizzle guarda quais migrações já rodaram em `drizzle.__drizzle_migrations`
 
 ## 3. Pegar a connection string do pooler e o certificado do Supabase
 
-Você vai colar estes dois valores só no painel do Render (passo 4). Não os salve em arquivo.
+Você vai colar estes dois valores no painel do Render (passo 4). Não os salve em arquivo versionado. Única exceção: o `.crt` baixado do certificado fica em disco só até criar o admin (passo 6, “Criar o primeiro admin em produção”); depois apague o arquivo.
 
 - **`DATABASE_URL`**: Supabase → **Connect** (ou Project Settings → Database) → connection string do **Session pooler** (host `…pooler.supabase.com`, porta `5432`). Preencha a senha do banco no lugar do marcador. O formato é este, com valores fictícios:
 
