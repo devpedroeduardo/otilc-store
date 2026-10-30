@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  mercadoPagoOrderIdSchema,
   mercadoPagoWebhookBodySchema,
   mercadoPagoWebhookQuerySchema,
   pixChargeSchema,
@@ -133,4 +134,37 @@ test('corpo do webhook recusa formato inválido', () => {
   ]) {
     assert.equal(mercadoPagoWebhookBodySchema.safeParse(body).success, false, JSON.stringify(body));
   }
+});
+
+test('id de order aceita só ORD seguido de maiúsculas e dígitos', () => {
+  for (const id of ['ORD01JP84C939T20S0P1DN382FQ6K', `ORD${'A1'.repeat(20)}`]) {
+    assert.equal(mercadoPagoOrderIdSchema.safeParse(id).success, true, id);
+  }
+  for (const id of [
+    '123456789',
+    'PAY01JP84C939T20S0P1DN382FQ6K',
+    'ord01jp84c939t20s0p1dn382fq6k',
+    'ORD01JP84C939T20S0P1DN382FQ',
+    `ORD${'A'.repeat(41)}`,
+    'ORD01JP84C939T20S0P1DN382FQ6K/cancel',
+    ' ORD01JP84C939T20S0P1DN382FQ6K',
+  ]) {
+    assert.equal(mercadoPagoOrderIdSchema.safeParse(id).success, false, id);
+  }
+});
+
+test('notificação de order passa nos schemas do webhook com o id intacto', () => {
+  const id = 'ORD01JP84C939T20S0P1DN382FQ6K';
+  assert.deepEqual(mercadoPagoWebhookQuerySchema.parse({ 'data.id': id, type: 'order' }), {
+    'data.id': id,
+    type: 'order',
+  });
+  assert.deepEqual(
+    mercadoPagoWebhookBodySchema.parse({
+      type: 'order',
+      action: 'order.processed',
+      data: { id, status: 'processed', total_amount: '50.00' },
+    }),
+    { type: 'order', action: 'order.processed', data: { id } },
+  );
 });
