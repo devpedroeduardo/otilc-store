@@ -307,6 +307,37 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       await paymentOf(order.id);
     });
 
+    it('quem esperou a trava relê o pedido: pago durante a espera → 409, sem status velho (spec-022)', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      const { order } = await orderWithPix(v.id);
+
+      // O teste segura a trava do pedido (mesma chave do pix.service.ts) e o marca pago enquanto o
+      // POST, que já leu o pedido como PENDING_PAYMENT, espera por ela. Commit solta a trava.
+      const { res: waiting, queued } = await ctx.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`otilc-pix-create:${order.id}`}, 0))`,
+        );
+        // Embrulhado: devolver a promessa direto faria a transação esperar a resposta (deadlock).
+        const res = createPix(order.id).then((r) => r);
+        let queued = false;
+        for (let i = 0; i < 100 && !queued; i++) {
+          const { rows } = await ctx.db.execute<{ n: number }>(
+            sql`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`,
+          );
+          queued = rows[0].n > 0;
+          if (!queued) await sleep(20);
+        }
+        await tx.update(orders).set({ status: 'PAID' }).where(eq(orders.id, order.id));
+        return { res, queued };
+      });
+
+      expect(queued).toBe(true);
+      const res = await waiting;
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ code: 'ORDER_NOT_PAYABLE' });
+      expect(createSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('cobrança rejeitada permite uma nova tentativa, com outra chave de idempotência', async () => {
       const v = await variantWithStock('05-camiseta-preta', 3);
       const { order, paymentId } = await orderWithPix(v.id);

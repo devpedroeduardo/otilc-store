@@ -70,10 +70,20 @@ export class PixService {
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`otilc-pix-create:${orderId}`}, 0))`,
       );
 
+      // Quem esperou a trava relê o pedido: ele pode ter sido pago, cancelado ou vencido enquanto a
+      // chamada anterior criava o Pix, e a resposta não pode sair com o status de antes da espera.
+      const current = await tx.query.orders.findFirst({
+        where: eq(orders.id, orderId),
+        columns: { status: true, expiresAt: true },
+      });
+      if (current?.status !== 'PENDING_PAYMENT' || current.expiresAt.getTime() <= Date.now()) {
+        throw pixError('ORDER_NOT_PAYABLE');
+      }
+
       const pending = await tx.query.payments.findFirst({
         where: and(eq(payments.orderId, orderId), eq(payments.status, 'PENDING')),
       });
-      if (pending) return { kind: 'charge', charge: toDto(pending, order), created: false };
+      if (pending) return { kind: 'charge', charge: toDto(pending, current), created: false };
 
       const [{ attempts }] = await tx
         .select({ attempts: count() })
@@ -129,7 +139,7 @@ export class PixService {
         })
         .onConflictDoNothing()
         .returning();
-      if (row) return { kind: 'charge', charge: toDto(row, order), created: true };
+      if (row) return { kind: 'charge', charge: toDto(row, locked), created: true };
       return { kind: 'conflict', providerPaymentId: remote.id };
     });
 
