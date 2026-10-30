@@ -54,3 +54,95 @@ test('pedido: a contagem segue o expiresAt e, ao zerar, para de consultar e esco
   await page.clock.runFor(30_000);
   expect(gets).toBe(after);
 });
+
+const CHARGE = {
+  orderId: ORDER_ID,
+  orderStatus: 'PENDING_PAYMENT',
+  status: 'PENDING',
+  amountCents: 25980,
+  qrCode: '00020126580014br.gov.bcb.pix-teste',
+  qrCodeBase64: PNG,
+  expiresAt: '2099-01-01T00:00:00.000Z',
+};
+const UNAVAILABLE = { statusCode: 503, code: 'PIX_UNAVAILABLE', message: 'indisponível' };
+const json = (route: Route, status: number, body: unknown) =>
+  route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// O `next dev` do E2E liga o reactStrictMode: o efeito da página roda duas vezes (duplo mount),
+// o que é o cenário do achado 2 da homologação da spec-021.
+test('pedido: o duplo mount do StrictMode gera 1 POST /pix e a tela não mostra "Pix indisponível"', async ({
+  page,
+}) => {
+  // Se o 2º POST existir, ele chega primeiro e com erro: antes da correção a tela piscava.
+  const posts: number[] = [];
+  await page.addInitScript(() => {
+    const w = window as unknown as { __flash: boolean };
+    w.__flash = false;
+    new MutationObserver(() => {
+      if (document.body?.textContent?.includes('Pix indisponível')) w.__flash = true;
+    }).observe(document, { childList: true, subtree: true, characterData: true });
+  });
+  await page.route(`**/api/orders/${ORDER_ID}/pix`, async (route) => {
+    if (route.request().method() !== 'POST') return json(route, 200, CHARGE);
+    posts.push(posts.length + 1);
+    if (posts.length === 1) {
+      await delay(600);
+      return json(route, 201, CHARGE);
+    }
+    return json(route, 503, UNAVAILABLE);
+  });
+
+  await page.goto(`/pedido/${ORDER_ID}`);
+  await expect(page.getByRole('heading', { name: 'Aguardando pagamento' })).toBeVisible();
+  // Folga para qualquer resposta tardia de um 2º POST chegar.
+  await page.waitForTimeout(1_000);
+
+  expect(posts).toHaveLength(1);
+  expect(await page.evaluate(() => (window as unknown as { __flash: boolean }).__flash)).toBe(
+    false,
+  );
+  await expect(page.getByAltText('QR code do Pix')).toBeVisible();
+});
+
+test('pedido: resposta de erro atrasada não troca o QR já na tela', async ({ page }) => {
+  // 1º POST lento e com sucesso; qualquer POST a mais responde erro, e depois dele.
+  const posts: number[] = [];
+  await page.route(`**/api/orders/${ORDER_ID}/pix`, async (route) => {
+    if (route.request().method() !== 'POST') return json(route, 200, CHARGE);
+    posts.push(posts.length + 1);
+    if (posts.length === 1) {
+      await delay(1_500);
+      return json(route, 201, CHARGE);
+    }
+    return json(route, 503, UNAVAILABLE);
+  });
+
+  await page.goto(`/pedido/${ORDER_ID}`);
+  await expect(page.getByAltText('QR code do Pix')).toBeVisible();
+  await page.waitForTimeout(1_000);
+  await expect(page.getByAltText('QR code do Pix')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pix indisponível' })).toHaveCount(0);
+  expect(posts).toHaveLength(1);
+});
+
+test('pedido: "Tentar de novo" depois de um erro real faz um único POST por clique', async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.route(`**/api/orders/${ORDER_ID}/pix`, (route) => {
+    if (route.request().method() !== 'POST') return json(route, 200, CHARGE);
+    posts += 1;
+    // Falha só na 1ª criação; a nova tentativa funciona.
+    return posts === 1 ? json(route, 503, UNAVAILABLE) : json(route, 201, CHARGE);
+  });
+
+  await page.goto(`/pedido/${ORDER_ID}`);
+  await expect(page.getByRole('heading', { name: 'Pix indisponível' })).toBeVisible();
+  expect(posts).toBe(1);
+
+  await page.getByRole('button', { name: 'Tentar de novo' }).dblclick();
+  await expect(page.getByAltText('QR code do Pix')).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(posts).toBe(2);
+});
