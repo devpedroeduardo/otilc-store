@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatBRL, pixErrorMessages, type PixChargeDto } from '@otilc/shared';
 import { createPixCharge, getPixCharge, type PixResult } from '@/lib/api';
 
@@ -50,16 +50,26 @@ export function PedidoPix({ orderId }: { orderId: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState<'ok' | 'fail' | null>(null);
 
+  // Criação em andamento: o ref sobrevive ao remount simulado do StrictMode (o estado também),
+  // então o efeito que roda duas vezes e os cliques repetidos viram um único POST /pix.
+  const creating = useRef(false);
+
   const start = useCallback(async () => {
+    if (creating.current) return;
+    creating.current = true;
     setView({ kind: 'loading' });
-    const result = await createPixCharge(orderId);
-    if (result.kind === 'error' && result.code === 'ORDER_NOT_PAYABLE') {
-      // Pedido já pago, cancelado ou vencido: a cobrança mais recente diz qual.
-      const latest = await getPixCharge(orderId);
-      setView(latest.kind === 'charge' ? toView(latest) : { kind: 'notPayable' });
-      return;
+    try {
+      const result = await createPixCharge(orderId);
+      let next = toView(result);
+      if (result.kind === 'error' && result.code === 'ORDER_NOT_PAYABLE') {
+        // Pedido já pago, cancelado ou vencido: a cobrança mais recente diz qual.
+        const latest = await getPixCharge(orderId);
+        next = latest.kind === 'charge' ? toView(latest) : { kind: 'notPayable' };
+      }
+      setView(next);
+    } finally {
+      creating.current = false;
     }
-    setView(toView(result));
   }, [orderId]);
 
   useEffect(() => {

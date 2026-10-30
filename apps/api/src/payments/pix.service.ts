@@ -12,11 +12,28 @@ import { PIX_EXPIRATION_TIME, pixExpiresAt } from './pix-expiration';
 /** Intervalo mínimo entre duas consultas sob demanda ao Mercado Pago para o mesmo pedido. */
 export const ON_DEMAND_CHECK_SECONDS = 20;
 
+/**
+ * Teto de criações de Pix simultâneas por instância (spec-022). Cada criação segura uma conexão
+ * durante a chamada ao Mercado Pago (até 10 s); com 4 do pool de 10, sobram 6 para o resto da API
+ * (catálogo, checkout, webhook, painel, consultas e os jobs de expiração e conciliação).
+ */
+export const PIX_CREATE_CONCURRENCY = 4;
+/** Espera máxima, em memória e sem conexão, por uma vaga de criação; depois disso, 503. */
+export const PIX_CREATE_WAIT_MS = 5_000;
+
 type PaymentRow = typeof payments.$inferSelect;
+
+/** Resultado da criação feita sob a trava do pedido. */
+type CreateOutcome =
+  | { kind: 'charge'; charge: PixChargeDto; created: boolean }
+  | { kind: 'not_payable' | 'conflict'; providerPaymentId: string };
 
 @Injectable()
 export class PixService {
   private readonly logger = new Logger(PixService.name);
+  /** Última criação de cada pedido nesta instância: as do mesmo pedido entram em fila. */
+  private readonly creating = new Map<string, Promise<void>>();
+  private readonly slots = new Semaphore(PIX_CREATE_CONCURRENCY);
 
   constructor(
     @Inject(DB) private readonly db: Database,
@@ -27,15 +44,53 @@ export class PixService {
 
   /**
    * Cria a cobrança Pix do pedido, ou devolve a PENDING que já existe (sem chamar o provedor).
-   * O valor é sempre o total do pedido no banco. Duas chamadas simultâneas usam a mesma chave de
-   * idempotência (pedido + tentativa), recebem o mesmo pagamento do Mercado Pago e só uma grava:
-   * o UNIQUE de `provider_payment_id` e o índice de uma PENDING por pedido barram a outra.
+   * O valor é sempre o total do pedido no banco. Chamadas simultâneas para o mesmo pedido entram
+   * uma de cada vez (trava consultiva por pedido, spec-022): só a primeira chama o Mercado Pago, e
+   * as outras devolvem a cobrança que ela gravou. O UNIQUE de `provider_payment_id` e o índice de
+   * uma PENDING por pedido continuam barrando gravação duplicada.
    * A gravação revalida o pedido com ele travado; se ele deixou de ser pagável enquanto o Mercado
    * Pago criava o Pix, nada é gravado, o Pix é cancelado lá e a resposta é ORDER_NOT_PAYABLE.
+   * Antes do banco, duas filas em memória poupam o pool de conexões: as chamadas do mesmo pedido
+   * esperam a anterior terminar, e no máximo `PIX_CREATE_CONCURRENCY` criações por instância seguram
+   * conexão ao mesmo tempo. A trava no banco continua valendo entre instâncias.
    */
-  async createCharge(orderId: string): Promise<{ charge: PixChargeDto; created: boolean }> {
+  createCharge(orderId: string): Promise<{ charge: PixChargeDto; created: boolean }> {
+    const previous = this.creating.get(orderId) ?? Promise.resolve();
+    const current = previous.then(() =>
+      this.withSlot(orderId, () => this.createChargeNow(orderId)),
+    );
+    const settled = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.creating.set(orderId, settled);
+    void settled.then(() => {
+      if (this.creating.get(orderId) === settled) this.creating.delete(orderId);
+    });
+    return current;
+  }
+
+  /** Roda `fn` com uma das vagas de criação; sem vaga em `PIX_CREATE_WAIT_MS`, 503. */
+  private async withSlot<T>(orderId: string, fn: () => Promise<T>): Promise<T> {
+    if (!(await this.slots.acquire(PIX_CREATE_WAIT_MS))) {
+      this.logger.warn(
+        `Pix do pedido ${orderId} recusado: ${PIX_CREATE_CONCURRENCY} criações em andamento.`,
+      );
+      throw pixError('PIX_UNAVAILABLE');
+    }
+    try {
+      return await fn();
+    } finally {
+      this.slots.release();
+    }
+  }
+
+  private async createChargeNow(
+    orderId: string,
+  ): Promise<{ charge: PixChargeDto; created: boolean }> {
     const config = pixConfig(this.env);
-    if (!config || !this.provider) throw pixError('PIX_UNAVAILABLE');
+    const provider = this.provider;
+    if (!config || !provider) throw pixError('PIX_UNAVAILABLE');
 
     const order = await this.db.query.orders.findFirst({
       where: eq(orders.id, orderId),
@@ -54,49 +109,70 @@ export class PixService {
       throw pixError('ORDER_NOT_PAYABLE');
     }
 
-    const pending = await this.findPending(orderId);
-    if (pending) return { charge: toDto(pending, order), created: false };
-
-    const [{ attempts }] = await this.db
-      .select({ attempts: count() })
-      .from(payments)
-      .where(eq(payments.orderId, orderId));
-    const expiresAt = pixExpiresAt(new Date());
-
-    let remote;
-    try {
-      remote = await this.provider.createPixPayment({
-        orderId,
-        orderNumber: order.number,
-        amountCents: order.totalCents,
-        payerEmail: order.customerEmail,
-        payerFirstName: firstName(order.customerName),
-        expirationTime: PIX_EXPIRATION_TIME,
-        idempotencyKey: `otilc-pix-${orderId}-${attempts + 1}`,
-      });
-    } catch (err) {
-      this.logger.warn(`Falha ao criar o Pix do pedido ${orderId}: ${(err as Error).message}`);
-      throw pixError('PIX_UNAVAILABLE');
-    }
-    const status = toChargeStatus(remote.status, remote.statusDetail);
-    if (!status) {
-      this.logger.warn(
-        `Pix do pedido ${orderId} criado com status "${remote.status}/${remote.statusDetail ?? ''}".`,
+    // Uma criação por pedido de cada vez (spec-022): a trava consultiva da transação fica segurada
+    // da leitura da cobrança pendente até a gravação, inclusive durante a chamada ao Mercado Pago.
+    // Quem chega depois espera e lê a cobrança que a primeira gravou. Ela é liberada no commit ou
+    // no rollback (erro e timeout inclusive), e a chave é o hash de 64 bits do id do pedido.
+    const result = await this.db.transaction(async (tx): Promise<CreateOutcome> => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`otilc-pix-create:${orderId}`}, 0))`,
       );
-      throw pixError('PIX_UNAVAILABLE');
-    }
 
-    // Grava com o pedido travado (pedido → cobrança, a ordem do `PaymentTransitionService`) e só se
-    // ele ainda pode ser pago: o painel trava o mesmo pedido ao marcar pago ou cancelar (spec-019),
-    // então ou a cobrança entra antes e o painel a vê, ou o painel grava antes e ela não entra.
-    const saved = await this.db.transaction(async (tx) => {
+      // Quem esperou a trava relê o pedido: ele pode ter sido pago, cancelado ou vencido enquanto a
+      // chamada anterior criava o Pix, e a resposta não pode sair com o status de antes da espera.
+      const current = await tx.query.orders.findFirst({
+        where: eq(orders.id, orderId),
+        columns: { status: true, expiresAt: true },
+      });
+      if (current?.status !== 'PENDING_PAYMENT' || current.expiresAt.getTime() <= Date.now()) {
+        throw pixError('ORDER_NOT_PAYABLE');
+      }
+
+      const pending = await tx.query.payments.findFirst({
+        where: and(eq(payments.orderId, orderId), eq(payments.status, 'PENDING')),
+      });
+      if (pending) return { kind: 'charge', charge: toDto(pending, current), created: false };
+
+      const [{ attempts }] = await tx
+        .select({ attempts: count() })
+        .from(payments)
+        .where(eq(payments.orderId, orderId));
+      const expiresAt = pixExpiresAt(new Date());
+
+      let remote;
+      try {
+        remote = await provider.createPixPayment({
+          orderId,
+          orderNumber: order.number,
+          amountCents: order.totalCents,
+          payerEmail: order.customerEmail,
+          payerFirstName: firstName(order.customerName),
+          expirationTime: PIX_EXPIRATION_TIME,
+          idempotencyKey: `otilc-pix-${orderId}-${attempts + 1}`,
+        });
+      } catch (err) {
+        this.logger.warn(`Falha ao criar o Pix do pedido ${orderId}: ${(err as Error).message}`);
+        throw pixError('PIX_UNAVAILABLE');
+      }
+      const status = toChargeStatus(remote.status, remote.statusDetail);
+      if (!status) {
+        this.logger.warn(
+          `Pix do pedido ${orderId} criado com status "${remote.status}/${remote.statusDetail ?? ''}".`,
+        );
+        throw pixError('PIX_UNAVAILABLE');
+      }
+
+      // Grava com o pedido travado (pedido → cobrança, a ordem do `PaymentTransitionService`) e só
+      // se ele ainda pode ser pago: o painel trava o mesmo pedido ao marcar pago ou cancelar
+      // (spec-019), então ou a cobrança entra antes e o painel a vê, ou o painel grava antes e ela
+      // não entra.
       const [locked] = await tx
         .select({ status: orders.status, expiresAt: orders.expiresAt })
         .from(orders)
         .where(eq(orders.id, orderId))
         .for('update');
       if (locked?.status !== 'PENDING_PAYMENT' || locked.expiresAt.getTime() <= Date.now()) {
-        return 'not_payable' as const;
+        return { kind: 'not_payable', providerPaymentId: remote.id };
       }
       const [row] = await tx
         .insert(payments)
@@ -111,21 +187,26 @@ export class PixService {
         })
         .onConflictDoNothing()
         .returning();
-      return row;
+      if (row) return { kind: 'charge', charge: toDto(row, locked), created: true };
+      return { kind: 'conflict', providerPaymentId: remote.id };
     });
-    if (saved === 'not_payable') {
+
+    if (result.kind === 'charge') return { charge: result.charge, created: result.created };
+    if (result.kind === 'not_payable') {
       // O pedido saiu de PENDING_PAYMENT (ou venceu) durante a criação: o Pix recém-criado no
       // Mercado Pago é cancelado, já sem trava aberta. Falha só vai para o log (o Pix vence sozinho).
-      await this.cancelOrphan(orderId, remote.id);
+      await this.cancelOrphan(orderId, result.providerPaymentId);
       throw pixError('ORDER_NOT_PAYABLE');
     }
-    if (saved) return { charge: toDto(saved, order), created: true };
 
-    // Outra chamada simultânea gravou primeiro.
+    // Conflito na gravação mesmo com a trava (ex.: o UNIQUE de provider_payment_id).
     const existing =
       (await this.findPending(orderId)) ??
       (await this.db.query.payments.findFirst({
-        where: and(eq(payments.providerPaymentId, remote.id), eq(payments.orderId, orderId)),
+        where: and(
+          eq(payments.providerPaymentId, result.providerPaymentId),
+          eq(payments.orderId, orderId),
+        ),
       }));
     if (!existing) {
       this.logger.warn(
@@ -214,6 +295,40 @@ export class PixService {
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
     return toDto(payment, order);
+  }
+}
+
+/** Semáforo em memória: até `max` vagas; quem não acha vaga espera na fila até `waitMs`. */
+class Semaphore {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(private readonly max: number) {}
+
+  /** `true` com a vaga garantida (devolva com `release`); `false` se a espera esgotou. */
+  acquire(waitMs: number): Promise<boolean> {
+    if (this.active < this.max) {
+      this.active++;
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const grant = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        this.queue.splice(this.queue.indexOf(grant), 1);
+        resolve(false);
+      }, waitMs);
+      this.queue.push(grant);
+    });
+  }
+
+  /** Passa a vaga direto para o próximo da fila, ou a libera. */
+  release(): void {
+    const next = this.queue.shift();
+    if (next) next();
+    else this.active--;
   }
 }
 
