@@ -319,7 +319,7 @@ describe('Admin: pedidos e mudança de status (integração com Postgres)', () =
         // Cobrança gerada quando o Pix estava ligado; este app sobe sem MP_ACCESS_TOKEN.
         await ctx.db.insert(payments).values({
           orderId: id,
-          providerPaymentId: '1999999',
+          providerPaymentId: 'ORD00000000000000000001999999',
           status: 'PENDING',
           amountCents: v.price,
           expiresAt: new Date(Date.now() + 30 * 60_000),

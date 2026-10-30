@@ -11,7 +11,13 @@ import { PIX_PROVIDER, type MercadoPagoClient } from '../src/payments/mercadopag
 import { PaymentReconciliationService } from '../src/payments/payment-reconciliation.service';
 import { PaymentTransitionService } from '../src/payments/payment-transition.service';
 import { RECONCILIATION_MAX_FAILURES } from '../src/payments/reconciliation-backoff';
-import { mockMercadoPago, setupPixTestApp, signature, type MercadoPagoMock } from './pix-setup';
+import {
+  mockMercadoPago,
+  mpStatus,
+  setupPixTestApp,
+  signature,
+  type MercadoPagoMock,
+} from './pix-setup';
 import { resetData, teardownTestApp, type TestContext } from './setup';
 
 const WEB_ORIGIN = 'http://localhost:3000';
@@ -132,11 +138,11 @@ describe('Admin: painel de alertas de pagamento (integração com Postgres)', ()
   function webhook(dataId: string) {
     const requestId = randomUUID();
     return http()
-      .post(`/api/webhooks/mercadopago?data.id=${dataId}&type=payment`)
+      .post(`/api/webhooks/mercadopago?data.id=${dataId}&type=order`)
       .set('X-Forwarded-For', nextIp())
       .set('x-request-id', requestId)
       .set('x-signature', signature(dataId, requestId))
-      .send({ type: 'payment', action: 'payment.updated', data: { id: dataId } });
+      .send({ type: 'order', action: 'order.processed', data: { id: dataId } });
   }
 
   const alertWarnings = (providerPaymentId: string, alert: PaymentAlertType) =>
@@ -439,18 +445,18 @@ describe('Admin: painel de alertas de pagamento (integração com Postgres)', ()
       expect(alertWarnings(providerPaymentId, 'RECONCILIATION_STOPPED')).toEqual([]);
     });
 
-    it('PAYMENT_REVERSED resolvido não reabre com consultas repetidas (in_mediation segue APPROVED)', async () => {
+    it('PAYMENT_REVERSED resolvido não reabre com consultas repetidas (charged_back segue APPROVED)', async () => {
       const v = await variantWithStock(2);
       const { payment, providerPaymentId, orderId } = await orderWithPix(v.id);
       mp.remote.set(providerPaymentId, {
         ...mp.remote.get(providerPaymentId)!,
-        status: 'approved',
-        dateApproved: new Date(),
+        ...mpStatus.approved,
+        dateLastUpdated: new Date(),
       });
       await reconciliation.reconcile();
       mp.remote.set(providerPaymentId, {
         ...mp.remote.get(providerPaymentId)!,
-        status: 'in_mediation',
+        ...mpStatus.chargedBack,
       });
       await webhook(providerPaymentId).expect(200);
       const [alert] = await alertsOfPayment(payment.id);
