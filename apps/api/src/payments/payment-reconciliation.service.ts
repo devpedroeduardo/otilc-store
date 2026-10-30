@@ -3,7 +3,7 @@ import { and, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizz
 import { ENV, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
 import { payments } from '../db/schema';
-import { PIX_PROVIDER, type PixProvider } from './mercadopago.client';
+import { PIX_PROVIDER, PixProviderError, isOrderId, type PixProvider } from './mercadopago.client';
 import { PaymentTransitionService } from './payment-transition.service';
 import { skipIfRunning } from './skip-if-running';
 import { ON_DEMAND_CHECK_SECONDS } from './pix.service';
@@ -35,7 +35,8 @@ interface ClaimedPayment {
  * - `pix_disabled`: tem Pix PENDING, mas o Pix está desligado neste ambiente;
  * - `cancelled`: a cobrança foi encerrada (CANCELLED, ou REJECTED/REFUNDED pela resposta);
  * - `approved`: o Mercado Pago respondeu que o Pix já foi pago; o `syncFrom` aplicou a aprovação;
- * - `failed`: o PUT ou a transição falhou, ou a cobrança continua PENDING (vai para o log).
+ * - `failed`: o cancelamento, a consulta ou a transição falhou, ou a cobrança continua PENDING
+ *   (vai para o log).
  */
 export type CancelChargeResult = 'no_charge' | 'pix_disabled' | 'cancelled' | 'approved' | 'failed';
 
@@ -88,6 +89,9 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
    * - APPROVED nos últimos 7 dias e não conferidos há 6 h (estorno ou contestação);
    * - nunca um conferido há menos de 20 s (verificação sob demanda ou outra instância);
    * - nunca um em backoff (`next_check_at` no futuro) nem um no teto de falhas (spec-020).
+   *
+   * Pagamento com id antigo (numérico, de antes da API de Orders, spec-021) é pulado: sem chamar
+   * o Mercado Pago, sem contar falha e sem RECONCILIATION_STOPPED, só com um log.
    */
   async reconcile(): Promise<ReconciliationResult> {
     if (!this.provider) return { checked: 0, failed: 0 };
@@ -150,7 +154,15 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
       });
 
     let failed = 0;
+    let skipped = 0;
     for (const payment of claimed) {
+      if (!isOrderId(payment.providerPaymentId)) {
+        skipped++;
+        this.logger.warn(
+          `Conciliação do pagamento ${payment.id} pulada: id do provedor não é de order.`,
+        );
+        continue;
+      }
       try {
         // Sucesso zera o backoff dentro da transição (vale também para o webhook).
         await this.transition.sync(payment.providerPaymentId);
@@ -159,12 +171,11 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
         await this.recordFailure(payment, (err as Error).message);
       }
     }
-    if (claimed.length > 0) {
-      this.logger.log(
-        `Conciliação: ${claimed.length} pagamento(s) conferido(s), ${failed} com falha.`,
-      );
+    const checked = claimed.length - skipped;
+    if (checked > 0) {
+      this.logger.log(`Conciliação: ${checked} pagamento(s) conferido(s), ${failed} com falha.`);
     }
-    return { checked: claimed.length, failed };
+    return { checked, failed };
   }
 
   /**
@@ -269,8 +280,10 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
   }
 
   /**
-   * PUT de cancelamento e transição pela resposta (`syncFrom`). O resultado vem do status local
-   * depois da transição: só uma cobrança encerrada garante que o QR não é mais pagável.
+   * Cancelamento da order e transição pela resposta (`syncFrom`). Se o Mercado Pago recusa porque
+   * a order não é mais cancelável (já cancelada ou já paga), consulta a order e aplica o estado
+   * real: aprovada vira `approved`, como na spec-019. O resultado vem do status local depois da
+   * transição: só uma cobrança encerrada garante que o QR não é mais pagável.
    * Falha vai para o log com os ids do pagamento e do pedido, nunca com dados do cliente.
    */
   private async cancelCharge(
@@ -279,7 +292,12 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
   ): Promise<CancelChargeResult> {
     const { providerPaymentId, orderId } = charge;
     try {
-      const remote = await provider.cancelPayment(providerPaymentId);
+      const remote = await provider.cancelPayment(providerPaymentId).catch((err: unknown) => {
+        if (err instanceof PixProviderError && err.notCancellable) {
+          return provider.getPayment(providerPaymentId);
+        }
+        throw err;
+      });
       await this.transition.syncFrom(remote);
     } catch (err) {
       this.logger.warn(

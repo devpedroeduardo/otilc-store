@@ -7,7 +7,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
-import { mercadoPagoWebhookBodySchema, type MercadoPagoWebhookQuery } from '@otilc/shared';
+import {
+  mercadoPagoOrderIdSchema,
+  mercadoPagoWebhookBodySchema,
+  type MercadoPagoWebhookQuery,
+} from '@otilc/shared';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ENV, pixConfig, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
@@ -24,6 +28,7 @@ export interface WebhookInput {
 }
 
 const bodyPipe = new ZodValidationPipe(mercadoPagoWebhookBodySchema);
+const orderIdPipe = new ZodValidationPipe(mercadoPagoOrderIdSchema);
 
 /** Ordem do processamento em docs/api/pagamentos.md. Nunca registra headers, corpo ou segredo. */
 @Injectable()
@@ -56,7 +61,9 @@ export class MercadoPagoWebhookService {
     if (body.data.id !== dataId) {
       throw new BadRequestException('O id do corpo não confere com o da notificação.');
     }
-    if (body.type !== 'payment') return 'ignored';
+    // Só notificações de order (API de Orders, spec-021); `payment` e outros tipos não são nossos.
+    if (body.type !== 'order') return 'ignored';
+    orderIdPipe.transform(dataId);
 
     const seen = await this.db.query.paymentNotifications.findFirst({
       where: eq(paymentNotifications.requestId, requestId),
@@ -67,7 +74,7 @@ export class MercadoPagoWebhookService {
     try {
       return await this.transition.sync(dataId, requestId);
     } catch (err) {
-      this.logger.error(`Notificação do pagamento ${dataId} falhou: ${(err as Error).message}`);
+      this.logger.error(`Notificação da order ${dataId} falhou: ${(err as Error).message}`);
       throw new InternalServerErrorException('Não foi possível processar a notificação.');
     }
   }

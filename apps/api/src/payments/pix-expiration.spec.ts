@@ -1,4 +1,4 @@
-import { PIX_MIN_VALIDITY_MINUTES, pixExpiresAt } from './pix-expiration';
+import { PIX_EXPIRATION_TIME, PIX_MIN_VALIDITY_MINUTES, pixExpiresAt } from './pix-expiration';
 
 describe('pixExpiresAt', () => {
   const now = new Date('2026-10-28T12:00:00.000Z');
@@ -11,5 +11,9 @@ describe('pixExpiresAt', () => {
 
   it('conta a partir da criação da cobrança, não do pedido', () => {
     expect(pixExpiresAt(now).toISOString()).toBe('2026-10-28T12:31:00.000Z');
+  });
+
+  it('manda a mesma validade ao Mercado Pago como duração ISO 8601', () => {
+    expect(PIX_EXPIRATION_TIME).toBe('PT31M');
   });
 });

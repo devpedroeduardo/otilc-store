@@ -4,10 +4,10 @@ import type { OrderStatus, PixChargeDto } from '@otilc/shared';
 import { ENV, pixConfig, type Env } from '../config/env';
 import { DB, type Database } from '../db/client';
 import { orders, payments } from '../db/schema';
-import { PIX_PROVIDER, toChargeStatus, type PixProvider } from './mercadopago.client';
+import { PIX_PROVIDER, isOrderId, toChargeStatus, type PixProvider } from './mercadopago.client';
 import { PaymentTransitionService } from './payment-transition.service';
 import { pixError } from './pix-errors';
-import { pixExpiresAt } from './pix-expiration';
+import { PIX_EXPIRATION_TIME, pixExpiresAt } from './pix-expiration';
 
 /** Intervalo mínimo entre duas consultas sob demanda ao Mercado Pago para o mesmo pedido. */
 export const ON_DEMAND_CHECK_SECONDS = 20;
@@ -46,6 +46,7 @@ export class PixService {
         totalCents: true,
         expiresAt: true,
         customerEmail: true,
+        customerName: true,
       },
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
@@ -69,17 +70,19 @@ export class PixService {
         orderNumber: order.number,
         amountCents: order.totalCents,
         payerEmail: order.customerEmail,
-        expiresAt,
-        notificationUrl: config.notificationUrl,
+        payerFirstName: firstName(order.customerName),
+        expirationTime: PIX_EXPIRATION_TIME,
         idempotencyKey: `otilc-pix-${orderId}-${attempts + 1}`,
       });
     } catch (err) {
       this.logger.warn(`Falha ao criar o Pix do pedido ${orderId}: ${(err as Error).message}`);
       throw pixError('PIX_UNAVAILABLE');
     }
-    const status = toChargeStatus(remote.status);
+    const status = toChargeStatus(remote.status, remote.statusDetail);
     if (!status) {
-      this.logger.warn(`Pix do pedido ${orderId} criado com status "${remote.status}".`);
+      this.logger.warn(
+        `Pix do pedido ${orderId} criado com status "${remote.status}/${remote.statusDetail ?? ''}".`,
+      );
       throw pixError('PIX_UNAVAILABLE');
     }
 
@@ -137,6 +140,7 @@ export class PixService {
    * Cobrança mais recente do pedido. Se ela está PENDING e o pedido PENDING_PAYMENT, consulta o
    * Mercado Pago no máximo uma vez a cada 20 s por pedido: a reserva da vez é um UPDATE atômico
    * de `last_checked_at`, e só quem recebeu a linha consulta. Falha do provedor não vira erro.
+   * Cobrança com id antigo (numérico, de antes da API de Orders) não é consultada: só log.
    */
   async getCharge(orderId: string): Promise<PixChargeDto> {
     let payment = await this.latest(orderId);
@@ -155,7 +159,11 @@ export class PixService {
           ),
         )
         .returning({ id: payments.id });
-      if (reserved.length > 0) {
+      if (reserved.length > 0 && !isOrderId(payment.providerPaymentId)) {
+        this.logger.warn(
+          `Verificação do pagamento ${payment.id} pulada: id do provedor não é de order.`,
+        );
+      } else if (reserved.length > 0) {
         try {
           await this.transition.sync(payment.providerPaymentId);
         } catch (err) {
@@ -174,7 +182,7 @@ export class PixService {
   private async cancelOrphan(orderId: string, providerPaymentId: string): Promise<void> {
     try {
       const remote = await this.provider?.cancelPayment(providerPaymentId);
-      if (remote && remote.status !== 'cancelled') {
+      if (remote && remote.status !== 'canceled') {
         this.logger.warn(
           `Pix ${providerPaymentId} do pedido ${orderId} não gravado ficou "${remote.status}" ao cancelar.`,
         );
@@ -207,6 +215,11 @@ export class PixService {
     if (!order) throw new NotFoundException('Pedido não encontrado.');
     return toDto(payment, order);
   }
+}
+
+/** Primeiro nome do cliente para o Mercado Pago (`payer.first_name`). */
+function firstName(customerName: string): string {
+  return customerName.trim().split(/\s+/)[0] ?? '';
 }
 
 function toDto(payment: PaymentRow, order: { status: OrderStatus; expiresAt: Date }): PixChargeDto {
