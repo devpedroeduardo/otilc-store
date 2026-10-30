@@ -110,12 +110,19 @@ Os `.env` ficam fora do git (`.gitignore`). Você preenche `apps/api/.env` na se
 
 O passo a passo exato muda no painel do Mercado Pago; confira cada tela na documentação, linkada na seção 10.
 
-### 3.1 Aplicação e credenciais de teste
+### 3.1 Vendedor de teste, aplicação e credenciais
 
-1. Em <https://www.mercadopago.com.br/developers/panel/app> crie (ou reaproveite) uma aplicação de **Checkout Transparente / API de Orders** (a loja chama `POST /v1/orders`).
-2. Em **Credenciais**, selecione o ambiente de **Teste**. Copie o **Access Token de teste**. O prefixo do token (`TEST-` ou `APP_USR-`) não importa: a API aceita qualquer token com 8 a 500 caracteres, então cole o que o painel mostrar.
+A API de Orders recusa um token `TEST-` com `401 invalid_credentials`. No sandbox, a loja precisa da credencial de **produção** (`APP_USR-`) de um **usuário de teste vendedor**, com aplicação e webhook próprios. A credencial da sua conta real não serve para o sandbox.
+
+1. Em <https://www.mercadopago.com.br/developers/panel/app> abra **Contas de teste** e crie um usuário de teste com o perfil **Vendedor**. Se a 3.2 precisar de comprador, crie também um com o perfil **Comprador**. Anote o usuário e a senha que o painel mostrar, só fora do repositório.
+2. Entre no painel de desenvolvedores **como esse vendedor** (janela anônima, para não misturar com a sua conta real).
+3. Com o vendedor logado, crie uma aplicação de **Checkout Transparente / API de Orders** (a loja chama `POST /v1/orders`).
+4. Em **Credenciais** da aplicação do vendedor, abra as credenciais de **produção** e copie o **Access Token**, que começa com `APP_USR-`. Ele vai para `MP_ACCESS_TOKEN` (seção 4). Mesmo sendo "de produção", ele pertence ao usuário de teste e só mexe no sandbox.
+5. O webhook é o da aplicação do vendedor, configurado na 3.3. A URL e a assinatura secreta de outra aplicação não valem.
 
 ### 3.2 E-mail e nome do pagador no sandbox
+
+> **Não revalidado com `APP_USR-`.** As regras abaixo foram observadas com a credencial antiga e ficam como registro. Confirme cada uma na primeira rodada com o vendedor de teste e anote o que mudar.
 
 A API de Orders, no ambiente de teste, aceita **só** o e-mail `test@testuser.com` como pagador ([Realizar uma compra teste com Pix](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/integration-test/pix)); outro e-mail volta `400` (`invalid_email_for_sandbox`). O e-mail de usuário de teste no formato `test_user_<id>@testuser.com` foi recusado na spec-017 com `403` (`cause 4390`, achado 1): registre no caso c se isso ainda acontece.
 
@@ -126,17 +133,19 @@ O status final do Pix de teste depende do **primeiro nome** do pagador, que a lo
 | `Ana Teste` (qualquer) | fica pendente (`action_required/waiting_transfer`) | c, e, h, j, k |
 | `APRO Teste`           | aprova sozinho logo depois de criar (`processed`)  | d, f, g, i    |
 
-Contas de teste (vendedor/comprador) não são necessárias para estes casos.
+Se estas regras ainda valem com o vendedor de teste, o comprador de teste não é necessário. Anote o que você observar.
 
 ### 3.3 Webhook no painel: evento Order
 
-Em **Suas integrações → sua aplicação → Webhooks → Configurar notificações** ([Notificações](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/notifications)):
+> **O sandbox não entrega webhook real de order.** Só o botão **Simular notificação** do painel chega à API. Ele serve para testar a rota e a assinatura. O primeiro webhook real de um pagamento só aparece na seção 9.4.
+
+Em **Suas integrações → a aplicação do vendedor de teste → Webhooks → Configurar notificações** ([Notificações](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/notifications)):
 
 1. Na **URL modo teste**, coloque `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago`.
 2. Marque o evento **Order (Mercado Pago)**. A loja ignora notificações de **Pagamentos** (`type=payment`, responde `200` sem fazer nada); deixe esse evento ligado só até a virada em produção (seção 9.7).
 3. Na **URL modo produção**, coloque a **mesma** URL com o mesmo evento (a virada em produção usa a URL do Render; seção 9.7).
 4. **Salvar**. Revele a **assinatura secreta** em Webhooks → Configurar notificação: ela vai para `MP_WEBHOOK_SECRET` (seção 4). Confira se é a mesma que você já usava; se o painel gerar outra para o evento Order, use a nova.
-5. Se o painel tiver o botão para **simular** o envio de uma notificação, use-o no caso h-2.
+5. Use o botão **Simular notificação** no caso h-2. Como o sandbox não entrega webhook real, nos casos d, f e g a confirmação do pagamento depende do simulador ou da conciliação.
 
 A API de Orders não tem `notification_url` na order: a URL do painel é a única. Por isso `MP_NOTIFICATION_URL` saiu da API (se ainda estiver no seu `.env`, é ignorada; pode apagar).
 
@@ -144,16 +153,16 @@ A API de Orders não tem `notification_url` na order: a URL do painel é a únic
 
 Nenhum valor real vai para arquivo versionado. `apps/api/.env` e `apps/web/.env.local` estão no `.gitignore`.
 
-| Variável                             | Arquivo / lugar        | De onde vem                                       | Exemplo (fictício)                                              |
-| ------------------------------------ | ---------------------- | ------------------------------------------------- | --------------------------------------------------------------- |
-| `DATABASE_URL`                       | `apps/api/.env`        | já vem do `.env.example`                          | `postgres://otilc:otilc@localhost:5432/otilc`                   |
-| `WEB_ORIGIN`                         | `apps/api/.env`        | padrão do `.env.example`; não mude                | `http://localhost:3000`                                         |
-| `MP_ACCESS_TOKEN`                    | `apps/api/.env`        | Credenciais de teste (3.1)                        | `TEST-xxxx`                                                     |
-| `MP_WEBHOOK_SECRET`                  | `apps/api/.env`        | assinatura secreta do Webhooks (3.3)              | `segredo-ficticio`                                              |
-| `ORDER_HOLD_MINUTES`                 | `apps/api/.env`        | só para o teste (mínimo da API é 5)               | `5`                                                             |
-| `PAYMENT_RECONCILIATION_INTERVAL_MS` | `apps/api/.env`        | só para o teste (mínimo da API é 30000)           | `30000`                                                         |
-| `API_URL`, `NEXT_PUBLIC_API_URL`     | `apps/web/.env.local`  | padrão do `.env.example`: `http://localhost:3333` | não mude                                                        |
-| URL do webhook (teste e produção)    | painel do Mercado Pago | túnel + `/api/webhooks/mercadopago` (3.3)         | `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago` |
+| Variável                             | Arquivo / lugar        | De onde vem                                        | Exemplo (fictício)                                              |
+| ------------------------------------ | ---------------------- | -------------------------------------------------- | --------------------------------------------------------------- |
+| `DATABASE_URL`                       | `apps/api/.env`        | já vem do `.env.example`                           | `postgres://otilc:otilc@localhost:5432/otilc`                   |
+| `WEB_ORIGIN`                         | `apps/api/.env`        | padrão do `.env.example`; não mude                 | `http://localhost:3000`                                         |
+| `MP_ACCESS_TOKEN`                    | `apps/api/.env`        | Access Token `APP_USR-` do vendedor de teste (3.1) | `<access-token-APP_USR-do-vendedor-de-teste>`                   |
+| `MP_WEBHOOK_SECRET`                  | `apps/api/.env`        | assinatura secreta do Webhooks (3.3)               | `segredo-ficticio`                                              |
+| `ORDER_HOLD_MINUTES`                 | `apps/api/.env`        | só para o teste (mínimo da API é 5)                | `5`                                                             |
+| `PAYMENT_RECONCILIATION_INTERVAL_MS` | `apps/api/.env`        | só para o teste (mínimo da API é 30000)            | `30000`                                                         |
+| `API_URL`, `NEXT_PUBLIC_API_URL`     | `apps/web/.env.local`  | padrão do `.env.example`: `http://localhost:3333`  | não mude                                                        |
+| URL do webhook (teste e produção)    | painel do Mercado Pago | túnel + `/api/webhooks/mercadopago` (3.3)          | `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago` |
 
 - Não defina `NODE_ENV=production`: produção exige `DATABASE_CA_CERT` e `WEB_ORIGIN` https, que não existem aqui.
 - **Depois de mudar o `apps/api/.env`, pare a API (Ctrl+C) e rode `npm run dev` de novo**: ela só lê o `.env` ao iniciar. Se mudar de URL de túnel, mude só no painel.
@@ -364,6 +373,8 @@ O preço sempre vem do banco (`priceCents`) e o `ORDER_HOLD_MINUTES` mínimo é 
 No `apps/api/.env` substitua `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` pelos de **produção** (os placeholders de exemplo da seção 4 mostram o formato). `ORDER_HOLD_MINUTES=5` e `PAYMENT_RECONCILIATION_INTERVAL_MS=30000` continuam como estão. Pare a API (Ctrl+C), rode `npm run dev` e suba o túnel (`ngrok http 3333`). Use sempre o produto `produto-de-teste-pix`, com um e-mail **comum** (não `test@testuser.com`) e **diferente** do da sua conta do Mercado Pago (ele é enviado ao Mercado Pago como pagador). O nome pode ser qualquer um: `APRO` só tem efeito no sandbox.
 
 ### 9.4 Caso d em produção
+
+Esta é a **primeira prova real** de webhook de order: o sandbox não entrega o webhook (3.3). Quem faz é o Pedro, com um Pix real de cerca de R$ 1.
 
 **d-prod) Pix real pago → webhook → pedido `PAID`**
 
