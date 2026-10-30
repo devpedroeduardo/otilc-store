@@ -266,15 +266,15 @@ Query: `status` (opcional, um de `PENDING_PAYMENT`, `PAID`, `CANCELED`, `EXPIRED
 
 #### Cancelamento do Pix ao marcar pago ou cancelar ([spec-019](../../specs/019-cancelar-pix-ao-marcar-pago.md))
 
-Saindo de `PENDING_PAYMENT` (para `PAID` ou `CANCELED`), se o pedido tem um Pix `PENDING`, ele é cancelado no Mercado Pago **antes** de o status mudar no banco, fora de qualquer transação (o mesmo `PUT` do cancelamento na expiração, ver [pagamentos.md](pagamentos.md)). O QR antigo deixa de ser pagável e não há cobrança dupla. Pedido sem Pix `PENDING` não chama o Mercado Pago e segue como antes.
+Saindo de `PENDING_PAYMENT` (para `PAID` ou `CANCELED`), se o pedido tem um Pix `PENDING`, ele é cancelado no Mercado Pago **antes** de o status mudar no banco, fora de qualquer transação (o mesmo `POST /v1/orders/{id}/cancel` do cancelamento na expiração, ver [pagamentos.md](pagamentos.md#cancelamento-do-pix-quando-o-pedido-expira)). O QR antigo deixa de ser pagável e não há cobrança dupla. Pedido sem Pix `PENDING` não chama o Mercado Pago e segue como antes.
 
-| Situação                                                                                    | Resposta | O que muda                                                                              |
-| ------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
-| Mercado Pago confirma o cancelamento                                                        | `200`    | cobrança `CANCELLED`, depois a mudança de status e o estoque da tabela acima            |
-| Mercado Pago responde que o Pix já foi pago (o cliente pagou naquele instante)              | `409`    | a aprovação é aplicada como no webhook: pedido `PAID` pelo Pix, estoque baixado uma vez |
-| Falha no cancelamento (rede, tempo esgotado, erro do Mercado Pago, cobrança ainda pendente) | `502`    | nada; aviso no log com o id do pedido e do pagamento                                    |
-| Pix `PENDING` no banco, mas o Pix está desligado neste ambiente                             | `503`    | nada                                                                                    |
-| Outro Pix gerado pelo cliente entre o cancelamento e a gravação                             | `409`    | nada; tentar de novo cancela o novo Pix                                                 |
+| Situação                                                                                                                              | Resposta | O que muda                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
+| Mercado Pago confirma o cancelamento, ou recusa porque a order já estava cancelada (`order_already_canceled`; a API consulta a order) | `200`    | cobrança `CANCELLED`, depois a mudança de status e o estoque da tabela acima            |
+| Mercado Pago recusa porque a order já foi paga (o cliente pagou naquele instante); a API consulta a order e vê `processed`            | `409`    | a aprovação é aplicada como no webhook: pedido `PAID` pelo Pix, estoque baixado uma vez |
+| Falha no cancelamento ou na consulta (rede, tempo esgotado, `5xx`, `429`, cobrança ainda pendente)                                    | `502`    | nada; aviso no log com o id do pedido e do pagamento                                    |
+| Pix `PENDING` no banco, mas o Pix está desligado neste ambiente                                                                       | `503`    | nada                                                                                    |
+| Outro Pix gerado pelo cliente entre o cancelamento e a gravação                                                                       | `409`    | nada; tentar de novo cancela o novo Pix                                                 |
 
 ```json
 { "statusCode": 409, "message": "Este pedido já foi pago pelo Pix.", "error": "Conflict" }
@@ -319,7 +319,7 @@ Query: `situacao` (`abertos`, padrão; `resolvidos`; `todos`), `tipo` (opcional,
       "resolvedBy": "Dono",
       "payment": {
         "id": "b51e…",
-        "providerPaymentId": "1234567890",
+        "providerPaymentId": "ORD01JP84C939T20S0P1DN382FQ6K",
         "status": "PENDING",
         "amountCents": 25980
       },
