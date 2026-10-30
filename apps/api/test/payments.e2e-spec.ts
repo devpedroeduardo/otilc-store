@@ -229,6 +229,84 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       await paymentOf(order.id);
     });
 
+    /** Deixa a criação no provedor lenta, para as chamadas simultâneas se sobreporem de verdade. */
+    function slowCreate(ms: number) {
+      const impl = createSpy.getMockImplementation()!;
+      createSpy.mockImplementation(async (input) => {
+        await sleep(ms);
+        return impl(input);
+      });
+    }
+
+    it('chamadas simultâneas com o provedor lento chamam o provedor 1 vez (spec-022)', async () => {
+      slowCreate(300);
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      const order = await placeOrder([{ variantId: v.id, quantity: 1 }]);
+
+      const results = await Promise.all(Array.from({ length: 4 }, () => createPix(order.id)));
+
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 200, 200, 201]);
+      expect(new Set(results.map((r) => r.body.qrCode)).size).toBe(1);
+      await paymentOf(order.id);
+    });
+
+    it('pedidos diferentes não se bloqueiam: cada um chama o provedor 1 vez (spec-022)', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 4);
+      const a = await placeOrder([{ variantId: v.id, quantity: 1 }]);
+      const b = await placeOrder([{ variantId: v.id, quantity: 1 }]);
+      // A criação do pedido A só termina depois que a do B começou no provedor. Se a trava de A
+      // segurasse B, A esperaria até o limite e o teste falharia.
+      let bStarted!: () => void;
+      const bInProvider = new Promise<void>((resolve) => (bStarted = resolve));
+      let bWaitedForA = false;
+      const impl = createSpy.getMockImplementation()!;
+      createSpy.mockImplementation(async (input) => {
+        if (input.orderId === b.id) bStarted();
+        else {
+          await Promise.race([
+            bInProvider,
+            sleep(3000).then(() => {
+              bWaitedForA = true;
+            }),
+          ]);
+        }
+        await sleep(200);
+        return impl(input);
+      });
+
+      const results = await Promise.all(
+        [a.id, a.id, b.id, b.id].map(async (id) => ({ id, res: await createPix(id) })),
+      );
+
+      expect(bWaitedForA).toBe(false);
+      const calls = createSpy.mock.calls.map((c) => c[0].orderId).sort();
+      expect(calls).toEqual([a.id, b.id].sort());
+      for (const id of [a.id, b.id]) {
+        const mine = results.filter((r) => r.id === id).map((r) => r.res);
+        expect(mine.map((r) => r.status).sort()).toEqual([200, 201]);
+        expect(new Set(mine.map((r) => r.body.qrCode)).size).toBe(1);
+        await paymentOf(id);
+      }
+    });
+
+    it('falha do provedor libera a trava: a chamada que esperava cria o Pix (spec-022)', async () => {
+      slowCreate(200);
+      createSpy.mockImplementationOnce(async () => {
+        await sleep(200);
+        throw new PixProviderError('Mercado Pago respondeu 500.');
+      });
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      const order = await placeOrder([{ variantId: v.id, quantity: 1 }]);
+
+      const results = await Promise.all([createPix(order.id), createPix(order.id)]);
+
+      // A primeira falha (503) e o rollback solta a trava; a segunda entra, não acha cobrança e cria.
+      expect(results.map((r) => r.status).sort()).toEqual([201, 503]);
+      expect(createSpy).toHaveBeenCalledTimes(2);
+      await paymentOf(order.id);
+    });
+
     it('cobrança rejeitada permite uma nova tentativa, com outra chave de idempotência', async () => {
       const v = await variantWithStock('05-camiseta-preta', 3);
       const { order, paymentId } = await orderWithPix(v.id);
