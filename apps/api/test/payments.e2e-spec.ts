@@ -308,24 +308,40 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       await paymentOf(order.id);
     });
 
-    /** Provedor lento que conta quantas criações estão nele ao mesmo tempo. */
-    function slowCreateCounting(ms: number) {
+    /**
+     * Provedor que segura cada criação até o teste abrir a porteira e conta quantas estão nele ao
+     * mesmo tempo. `reached(n)` resolve quando `n` criações estão no provedor ao mesmo tempo.
+     */
+    function gatedCreate() {
       const impl = createSpy.getMockImplementation()!;
       const inProvider = { now: 0, max: 0 };
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => (open = resolve));
+      const waiters: { n: number; resolve: () => void }[] = [];
       createSpy.mockImplementation(async (input) => {
         inProvider.max = Math.max(inProvider.max, ++inProvider.now);
+        for (const w of waiters) if (inProvider.now >= w.n) w.resolve();
         try {
-          await sleep(ms);
+          await gate;
           return await impl(input);
         } finally {
           inProvider.now--;
         }
       });
-      return inProvider;
+      const reached = (n: number) =>
+        new Promise<void>((resolve) => {
+          if (inProvider.now >= n) resolve();
+          else waiters.push({ n, resolve });
+        });
+      return { inProvider, open, reached };
     }
 
+    /** Espera `promise` até `ms`; devolve `'timeout'` se ela não terminou (sem falhar o teste aqui). */
+    const within = <T>(promise: Promise<T>, ms: number) =>
+      Promise.race([promise, sleep(ms).then(() => 'timeout' as const)]);
+
     it('10 POST simultâneos (mesmo pedido e pedidos diferentes) com o MP lento não esgotam o pool (spec-022)', async () => {
-      const inProvider = slowCreateCounting(1500);
+      const provider = gatedCreate();
       const v = await variantWithStock('05-camiseta-preta', 7);
       const orderIds: string[] = [];
       for (let i = 0; i < 7; i++) {
@@ -336,15 +352,27 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       expect(targets).toHaveLength(10);
 
       const posts = Promise.all(targets.map(async (id) => ({ id, res: await createPix(id) })));
-      await sleep(300);
-      const started = Date.now();
-      await http().get('/api/products').set('X-Forwarded-For', nextIp()).expect(200);
-      const catalogMs = Date.now() - started;
+      let catalog;
+      try {
+        // Com o teto de vagas cheio e o MP segurando as 4 criações, o catálogo ainda acha conexão.
+        // Sem o teto, as 10 seguram as 10 conexões do pool e o GET só voltaria depois do MP.
+        await provider.reached(PIX_CREATE_CONCURRENCY);
+        catalog = await within(
+          http()
+            .get('/api/products')
+            .set('X-Forwarded-For', nextIp())
+            .then((r) => r),
+          5_000,
+        );
+        expect(provider.inProvider.now).toBe(PIX_CREATE_CONCURRENCY);
+      } finally {
+        provider.open();
+      }
       const results = await posts;
 
-      // Sem o teto, as 10 seguravam as 10 conexões do pool e o catálogo esperava o MP (~1,2 s).
-      expect(catalogMs).toBeLessThan(500);
-      expect(inProvider.max).toBe(PIX_CREATE_CONCURRENCY);
+      expect(catalog).not.toBe('timeout');
+      expect(catalog).toMatchObject({ status: 200 });
+      expect(provider.inProvider.max).toBe(PIX_CREATE_CONCURRENCY);
       expect(createSpy).toHaveBeenCalledTimes(7);
       for (const id of orderIds) {
         const mine = results.filter((r) => r.id === id).map((r) => r.res.status);
@@ -354,20 +382,27 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
     }, 20_000);
 
     it('sem vaga de criação dentro do prazo, 503 PIX_UNAVAILABLE em vez de fila infinita (spec-022)', async () => {
-      slowCreateCounting(PIX_CREATE_WAIT_MS + 500);
+      const provider = gatedCreate();
       const v = await variantWithStock('05-camiseta-preta', PIX_CREATE_CONCURRENCY + 1);
       const orderIds: string[] = [];
       for (let i = 0; i <= PIX_CREATE_CONCURRENCY; i++) {
         orderIds.push((await placeOrder([{ variantId: v.id, quantity: 1 }])).id);
       }
 
-      const results = await Promise.all(orderIds.map((id) => createPix(id)));
+      const posts = orderIds.map((id) => createPix(id).then((r) => r));
+      let first;
+      try {
+        // O MP segura as 4 vagas: a 5ª criação é a primeira a voltar, com 503 depois da espera.
+        first = await within(Promise.race(posts), PIX_CREATE_WAIT_MS + 5_000);
+      } finally {
+        provider.open();
+      }
+      const results = await Promise.all(posts);
 
+      expect(first).not.toBe('timeout');
+      expect(first).toMatchObject({ status: 503, body: { code: 'PIX_UNAVAILABLE' } });
       const statuses = results.map((r) => r.status).sort();
       expect(statuses).toEqual([...Array<number>(PIX_CREATE_CONCURRENCY).fill(201), 503].sort());
-      expect(results.find((r) => r.status === 503)!.body).toMatchObject({
-        code: 'PIX_UNAVAILABLE',
-      });
       expect(createSpy).toHaveBeenCalledTimes(PIX_CREATE_CONCURRENCY);
     }, 20_000);
 
