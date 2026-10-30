@@ -12,6 +12,9 @@ import { RECONCILIATION_MAX_FAILURES, reconciliationDelayMs } from './reconcilia
 /** Máximo de pagamentos conferidos com o Mercado Pago por rodada. */
 export const RECONCILIATION_BATCH = 50;
 
+/** Quanto tempo um pagamento com id antigo (não é de order) fica fora da conciliação. */
+export const LEGACY_ID_PAUSE_HOURS = 24;
+
 export interface ReconciliationResult {
   /** Pagamentos reivindicados e consultados no Mercado Pago nesta rodada. */
   checked: number;
@@ -91,7 +94,9 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
    * - nunca um em backoff (`next_check_at` no futuro) nem um no teto de falhas (spec-020).
    *
    * Pagamento com id antigo (numérico, de antes da API de Orders, spec-021) é pulado: sem chamar
-   * o Mercado Pago, sem contar falha e sem RECONCILIATION_STOPPED, só com um log.
+   * o Mercado Pago, sem contar falha e sem RECONCILIATION_STOPPED, só com um log. Ele vem depois
+   * dos ids de order no lote e, pulado, fica 24 h fora da seleção (`next_check_at`): ids antigos
+   * nunca ocupam o lote no lugar de pagamentos que podem ser conferidos.
    */
   async reconcile(): Promise<ReconciliationResult> {
     if (!this.provider) return { checked: 0, failed: 0 };
@@ -130,7 +135,10 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
           or(isNull(payments.nextCheckAt), lte(payments.nextCheckAt, sql`now()`)),
         ),
       )
-      .orderBy(sql`${payments.lastCheckedAt} ASC NULLS FIRST`)
+      .orderBy(
+        sql`CASE WHEN ${payments.providerPaymentId} LIKE 'ORD%' THEN 0 ELSE 1 END`,
+        sql`${payments.lastCheckedAt} ASC NULLS FIRST`,
+      )
       .limit(RECONCILIATION_BATCH)
       .for('update', { skipLocked: true })
       .as('due');
@@ -154,12 +162,12 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
       });
 
     let failed = 0;
-    let skipped = 0;
+    const skipped: string[] = [];
     for (const payment of claimed) {
       if (!isOrderId(payment.providerPaymentId)) {
-        skipped++;
+        skipped.push(payment.id);
         this.logger.warn(
-          `Conciliação do pagamento ${payment.id} pulada: id do provedor não é de order.`,
+          `Conciliação do pagamento ${payment.id} pulada por ${LEGACY_ID_PAUSE_HOURS} h: id do provedor não é de order.`,
         );
         continue;
       }
@@ -171,7 +179,13 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
         await this.recordFailure(payment, (err as Error).message);
       }
     }
-    const checked = claimed.length - skipped;
+    if (skipped.length > 0) {
+      await this.db
+        .update(payments)
+        .set({ nextCheckAt: sql`now() + make_interval(hours => ${LEGACY_ID_PAUSE_HOURS})` })
+        .where(inArray(payments.id, skipped));
+    }
+    const checked = claimed.length - skipped.length;
     if (checked > 0) {
       this.logger.log(`Conciliação: ${checked} pagamento(s) conferido(s), ${failed} com falha.`);
     }

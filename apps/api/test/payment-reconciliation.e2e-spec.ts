@@ -22,6 +22,7 @@ import {
   type ProviderPayment,
 } from '../src/payments/mercadopago.client';
 import {
+  LEGACY_ID_PAUSE_HOURS,
   PaymentReconciliationService,
   RECONCILIATION_BATCH,
 } from '../src/payments/payment-reconciliation.service';
@@ -1417,31 +1418,62 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       return { orderId: o.orderId, paymentRowId: (await paymentOf(o.orderId)).id };
     }
 
-    it('conciliação pula: sem chamar o MP, sem contar falha, sem RECONCILIATION_STOPPED, com log', async () => {
+    it('conciliação pula: sem chamar o MP, sem contar falha, sem RECONCILIATION_STOPPED, um log e 24 h fora', async () => {
       const v = await variantWithStock('05-camiseta-preta', 3);
       const { orderId, paymentRowId } = await orderWithLegacyPix(v.id);
       const healthy = await orderWithPix(v.id);
       approve(healthy.paymentId);
+      const before = Date.now();
 
-      for (let round = 0; round <= RECONCILIATION_MAX_FAILURES; round++) {
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      // Nas rodadas seguintes, mesmo sem o filtro dos 20 s, o id antigo fica fora por 24 h.
+      for (let round = 0; round < RECONCILIATION_MAX_FAILURES; round++) {
         await checkedAgo(orderId, null);
-        const result = await reconciliation.reconcile();
-        expect(result.failed).toBe(0);
+        expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
       }
 
       expect(checkedIds()).toEqual([healthy.paymentId]);
       expect(await orderStatus(healthy.orderId)).toBe('PAID');
       const row = await paymentOf(orderId);
       expect(row).toMatchObject({ status: 'PENDING', checkFailures: 0, alert: null });
+      const pause = row.nextCheckAt!.getTime() - before;
+      expect(pause).toBeGreaterThan(LEGACY_ID_PAUSE_HOURS * 3600_000 - 60_000);
+      expect(pause).toBeLessThan(LEGACY_ID_PAUSE_HOURS * 3600_000 + 60_000);
       expect(await alertsOf(orderId)).toEqual([]);
       const skipped = warnings().filter((w) => w.includes('pulada'));
-      expect(skipped).toHaveLength(RECONCILIATION_MAX_FAILURES + 1);
+      expect(skipped).toHaveLength(1);
       expect(skipped[0]).toContain(paymentRowId);
       expect(skipped[0]).not.toContain(LEGACY_ID);
       for (const w of warnings()) {
         expect(w).not.toContain(customer.email);
         expect(w).not.toContain(customer.name);
       }
+    });
+
+    it(`${RECONCILIATION_BATCH} ou mais ids antigos não ocupam o lote no lugar de um pagamento válido`, async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const healthy = await orderWithPix(v.id);
+      // Conferido há 1 min: sem a prioridade, os ids antigos nunca conferidos viriam antes dele.
+      await checkedAgo(healthy.orderId, 60);
+      approve(healthy.paymentId);
+      const at = new Date(Date.now() - 86_400_000);
+      await ctx.db.insert(payments).values(
+        Array.from({ length: RECONCILIATION_BATCH + 5 }, (_, i) => ({
+          orderId: healthy.orderId,
+          providerPaymentId: String(4_000_000 + i),
+          status: 'APPROVED' as const,
+          amountCents: 100,
+          expiresAt: at,
+          approvedAt: at,
+          createdAt: at,
+        })),
+      );
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      expect(checkedIds()).toEqual([healthy.paymentId]);
+      expect(await orderStatus(healthy.orderId)).toBe('PAID');
+      // As vagas que sobraram no lote foram para ids antigos, pulados e estacionados.
+      expect(warnings().filter((w) => w.includes('pulada'))).toHaveLength(RECONCILIATION_BATCH - 1);
     });
 
     it('verificação sob demanda pula: sem chamar o MP e sem erro para a loja', async () => {
