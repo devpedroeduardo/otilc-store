@@ -77,8 +77,8 @@ As duas fronteiras não se cruzam: cada dev commita só os próprios caminhos (`
 
 - [ ] (e2e API) N `POST /api/orders/:id/pix` simultâneos, com a criação do mock lenta, chamam o provedor **1 vez**. Todos recebem o mesmo QR, um com 201 e os outros com 200. O teste **falha na main d75a019** (o PR diz como isso foi conferido).
 - [ ] (e2e API) Pedidos diferentes não se bloqueiam: as criações simultâneas de 2 pedidos chamam o provedor 1 vez cada.
-- [ ] (Playwright) No fluxo normal da página do pedido sai **1** POST /pix por pedido, e "Pix indisponível" não aparece em nenhum momento. O teste falha no código atual. Se o `test:e2e:web` sobe a loja em build de produção (sem StrictMode), o PR explica como o duplo mount foi coberto.
-- [ ] (Playwright) Resposta velha não sobrescreve a tela: uma resposta de erro atrasada, depois de uma de sucesso, não troca o QR por erro.
+- [ ] (Playwright) No fluxo normal da página do pedido sai **1** POST /pix por pedido, e "Pix indisponível" não aparece em nenhum momento. _Emenda 2026-10-30 (Pedro): sem exigir que falhe no código atual. No `next dev` do Playwright o efeito roda 1 vez mesmo sem a guarda, então o duplo mount não é reproduzível por e2e. A proteção provada é a trava do back (critério 1); a guarda do front fica como defesa extra, e a raiz StrictMode se confirma na re-homologação do Pedro (0 erro 423 em dev)._
+- ~~(Playwright) Resposta velha não sobrescreve a tela.~~ _Emenda 2026-10-30 (Pedro): removido. Nenhum caminho real produz resposta velha (a guarda impede uma 2ª criação em andamento), então o contador `attempt` de `pedido-pix.tsx` sai como código morto._
 - [ ] Testes existentes de payments, conciliação, alertas, admin-orders (incluindo concorrência), backoff, rls e o `compra.spec.ts` ("Pix indisponível" sem MP) passam sem enfraquecer nenhuma asserção.
 - [ ] O roteiro 3.1/3.2/3.3/9.4, o placeholder da seção 4 e o `apps/api/.env.example` ficam como nas Decisões. Nenhum `TEST-` restante no roteiro diz que funciona com Orders.
 - [ ] Scorecard: linha 021 em commit `docs(agents)` separado.
