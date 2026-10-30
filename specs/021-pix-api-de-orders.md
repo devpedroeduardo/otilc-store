@@ -100,6 +100,7 @@ Somente estes caminhos podem ser criados ou alterados:
 - `docs/homologacao-local.md`
 - `docs/agents/scorecard.md` (linha 018)
 - `specs/021-pix-api-de-orders.md` (esta spec)
+- `render.yaml` (só remover o bloco `MP_NOTIFICATION_URL`) e `docs/deploy.md` (tirar a variável; no lugar, o passo de configurar no painel do MP o webhook com o evento "Order (Mercado Pago)", abas teste e produção, URL `<URL do Render>/api/webhooks/mercadopago`). Emenda da Bússola, 2026-10-30: o 1º deploy ainda não aconteceu e o roteiro seguiria com uma variável morta.
 
 ## Fora do escopo
 
