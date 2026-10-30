@@ -6,7 +6,6 @@ const DATABASE_URL = 'postgres://u@localhost:5432/db';
 const pix = {
   MP_ACCESS_TOKEN: `TEST-${randomBytes(16).toString('hex')}`,
   MP_WEBHOOK_SECRET: randomBytes(32).toString('hex'),
-  MP_NOTIFICATION_URL: 'https://api.example.test/api/webhooks/mercadopago',
 };
 // O restante que a produção exige (spec-016). Certificado fictício, só com o formato PEM.
 const CA_PEM = `-----BEGIN CERTIFICATE-----\n${randomBytes(48).toString('base64')}\n-----END CERTIFICATE-----\n`;
@@ -49,17 +48,16 @@ describe('loadEnv', () => {
     }
   });
 
-  it('com as três variáveis, o Pix fica ligado', () => {
+  it('com as duas variáveis, o Pix fica ligado', () => {
     expect(pixConfig(loadEnv({ DATABASE_URL, NODE_ENV: 'test', ...pix }))).toEqual({
       accessToken: pix.MP_ACCESS_TOKEN,
       webhookSecret: pix.MP_WEBHOOK_SECRET,
-      notificationUrl: pix.MP_NOTIFICATION_URL,
     });
   });
 
   it('em produção, não sobe sem as variáveis do Mercado Pago', () => {
     expect(() => loadEnv({ DATABASE_URL, NODE_ENV: 'production' })).toThrow(
-      /MP_ACCESS_TOKEN.*MP_WEBHOOK_SECRET.*MP_NOTIFICATION_URL/,
+      /MP_ACCESS_TOKEN.*MP_WEBHOOK_SECRET/,
     );
     expect(() => loadEnv({ ...prod, MP_WEBHOOK_SECRET: '' })).toThrow(/MP_WEBHOOK_SECRET/);
     expect(loadEnv(prod).MP_ACCESS_TOKEN).toBe(pix.MP_ACCESS_TOKEN);
@@ -110,10 +108,10 @@ describe('loadEnv', () => {
     }
   });
 
-  it('URL de notificação precisa ser https', () => {
-    expect(() =>
-      loadEnv({ DATABASE_URL, ...pix, MP_NOTIFICATION_URL: 'http://api.example.test/webhook' }),
-    ).toThrow(/MP_NOTIFICATION_URL/);
+  it('a URL de notificação não é mais lida: a que sobrar no ambiente não muda nada', () => {
+    const env = loadEnv({ ...prod, MP_NOTIFICATION_URL: 'http://api.example.test/webhook' });
+    expect(env).not.toHaveProperty('MP_NOTIFICATION_URL');
+    expect(pixConfig(env)).not.toHaveProperty('notificationUrl');
   });
 
   it('a mensagem de erro nunca traz o valor das variáveis', () => {

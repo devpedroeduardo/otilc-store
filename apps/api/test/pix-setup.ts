@@ -32,7 +32,6 @@ export async function setupPixTestApp(): Promise<TestContext> {
       ORDER_HOLD_MINUTES: '30',
       MP_ACCESS_TOKEN: `TEST-${randomBytes(16).toString('hex')}`,
       MP_WEBHOOK_SECRET: WEBHOOK_SECRET,
-      MP_NOTIFICATION_URL: 'https://api.example.test/api/webhooks/mercadopago',
     }),
   );
   await app.listen(0);
@@ -52,11 +51,33 @@ export function signature(
   return `ts=${ts},v1=${v1}`;
 }
 
+/** Id de order fictício no formato do Mercado Pago (`ORD` + 26 caracteres). */
+export function fakeOrderId(n: number): string {
+  return `ORD${String(n).padStart(26, '0')}`;
+}
+
+/** Status de order do Mercado Pago (API de Orders) que os testes usam, com o detalhe. */
+export const mpStatus = {
+  pending: { status: 'action_required', statusDetail: 'waiting_transfer' },
+  approved: { status: 'processed', statusDetail: 'accredited' },
+  partiallyRefunded: { status: 'processed', statusDetail: 'partially_refunded' },
+  canceled: { status: 'canceled', statusDetail: 'canceled' },
+  expired: { status: 'failed', statusDetail: 'expired' },
+  rejected: { status: 'failed', statusDetail: 'failed' },
+  refunded: { status: 'refunded', statusDetail: 'refunded' },
+  chargedBack: { status: 'charged_back', statusDetail: 'in_process' },
+} as const satisfies Record<string, Pick<ProviderPayment, 'status' | 'statusDetail'>>;
+
+/** Recusa do cancelamento como o cliente real a lança (4xx de order não cancelável). */
+export function notCancellable(code: string): PixProviderError {
+  return new PixProviderError(`Mercado Pago respondeu 409 (${code}).`, { notCancellable: true });
+}
+
 export const QR_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 export interface MercadoPagoMock {
-  /** Estado dos pagamentos "no Mercado Pago", por id. */
+  /** Estado das orders "no Mercado Pago", por id. */
   remote: Map<string, ProviderPayment>;
   createSpy: jest.SpyInstance<Promise<CreatedPixPayment>, [CreatePixInput]>;
   getSpy: jest.SpyInstance<Promise<ProviderPayment>, [string]>;
@@ -65,13 +86,14 @@ export interface MercadoPagoMock {
 
 /**
  * Substitui as chamadas do cliente do Mercado Pago com `jest.spyOn`, guardando o estado num
- * `Map`. Como o Mercado Pago: a mesma chave de idempotência devolve o mesmo pagamento, id
- * desconhecido é 404, e cancelar um Pix já aprovado devolve o pagamento aprovado.
+ * `Map`. Como a API de Orders: a mesma chave de idempotência devolve a mesma order, id
+ * desconhecido é 404, e cancelar uma order que não está mais `action_required` (já cancelada ou
+ * já paga) é recusado como não cancelável.
  */
 export function mockMercadoPago(client: MercadoPagoClient): MercadoPagoMock {
   const remote = new Map<string, ProviderPayment>();
   const byKey = new Map<string, string>();
-  let nextId = 1_000_000;
+  let next = 1_000_000;
   const find = (id: string) => {
     const payment = remote.get(id);
     if (!payment) throw new PixProviderError('Mercado Pago respondeu 404.');
@@ -81,16 +103,16 @@ export function mockMercadoPago(client: MercadoPagoClient): MercadoPagoMock {
     await sleep(10);
     let id = byKey.get(input.idempotencyKey);
     if (!id) {
-      id = String(nextId++);
+      id = fakeOrderId(next++);
       byKey.set(input.idempotencyKey, id);
       remote.set(id, {
         id,
-        status: 'pending',
+        ...mpStatus.pending,
         externalReference: input.orderId,
         amountCents: input.amountCents,
+        paidAmountCents: null,
         currency: 'BRL',
-        dateApproved: null,
-        dateLastUpdated: null,
+        dateLastUpdated: new Date(),
       });
     }
     return { ...remote.get(id)!, qrCode: `00020126-pix-ficticio-${id}`, qrCodeBase64: QR_BASE64 };
@@ -102,9 +124,9 @@ export function mockMercadoPago(client: MercadoPagoClient): MercadoPagoMock {
   const cancelSpy = jest.spyOn(client, 'cancelPayment').mockImplementation(async (id) => {
     await sleep(10);
     const payment = find(id);
-    if (payment.status === 'pending') {
-      remote.set(id, { ...payment, status: 'cancelled', dateLastUpdated: new Date() });
-    }
+    if (payment.status === 'canceled') throw notCancellable('order_already_canceled');
+    if (payment.status !== 'action_required') throw notCancellable('invalid_order_status');
+    remote.set(id, { ...payment, ...mpStatus.canceled, dateLastUpdated: new Date() });
     return { ...remote.get(id)! };
   });
   return { remote, createSpy, getSpy, cancelSpy };

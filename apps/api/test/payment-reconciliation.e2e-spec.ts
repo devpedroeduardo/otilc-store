@@ -22,6 +22,7 @@ import {
   type ProviderPayment,
 } from '../src/payments/mercadopago.client';
 import {
+  LEGACY_ID_PAUSE_HOURS,
   PaymentReconciliationService,
   RECONCILIATION_BATCH,
 } from '../src/payments/payment-reconciliation.service';
@@ -30,7 +31,15 @@ import {
   RECONCILIATION_MAX_FAILURES,
   reconciliationDelayMs,
 } from '../src/payments/reconciliation-backoff';
-import { mockMercadoPago, setupPixTestApp, signature, type MercadoPagoMock } from './pix-setup';
+import {
+  fakeOrderId,
+  mockMercadoPago,
+  mpStatus,
+  notCancellable,
+  setupPixTestApp,
+  signature,
+  type MercadoPagoMock,
+} from './pix-setup';
 import { resetData, teardownTestApp, TEST_DATABASE_URL, type TestContext } from './setup';
 
 const customer = { name: 'Bia Lima', email: 'bia@example.com', phone: '+5585999990001' };
@@ -123,7 +132,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
     mp.remote.set(id, { ...mp.remote.get(id)!, ...over });
   }
   const approve = (id: string, over: Partial<ProviderPayment> = {}) =>
-    setRemote(id, { status: 'approved', dateApproved: new Date(), ...over });
+    setRemote(id, { ...mpStatus.approved, dateLastUpdated: new Date(), ...over });
 
   /** Faz o pagamento parecer conferido há `secondsAgo` segundos (null: nunca conferido). */
   async function checkedAgo(orderId: string, secondsAgo: number | null) {
@@ -147,11 +156,11 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
   function webhook(dataId: string) {
     const requestId = randomUUID();
     return http()
-      .post(`/api/webhooks/mercadopago?data.id=${dataId}&type=payment`)
+      .post(`/api/webhooks/mercadopago?data.id=${dataId}&type=order`)
       .set('X-Forwarded-For', nextIp())
       .set('x-request-id', requestId)
       .set('x-signature', signature(dataId, requestId))
-      .send({ type: 'payment', action: 'payment.updated', data: { id: dataId } });
+      .send({ type: 'order', action: 'order.processed', data: { id: dataId } });
   }
 
   describe('rodada de conciliação', () => {
@@ -214,16 +223,20 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
     });
 
-    it.each(['cancelled', 'rejected'])(
-      'MP %s → payments.status atualizado, pedido não muda',
-      async (status) => {
+    it.each([
+      ['canceled/canceled', 'CANCELLED', mpStatus.canceled],
+      ['failed/expired', 'CANCELLED', mpStatus.expired],
+      ['failed/failed', 'REJECTED', mpStatus.rejected],
+    ] as const)(
+      'MP %s → payments.status %s, pedido não muda',
+      async (_label, local, remoteStatus) => {
         const v = await variantWithStock('05-camiseta-preta', 2);
         const { orderId, paymentId } = await orderWithPix(v.id);
-        setRemote(paymentId, { status });
+        setRemote(paymentId, remoteStatus);
 
         await reconciliation.reconcile();
 
-        expect((await paymentOf(orderId)).status).toBe(status.toUpperCase());
+        expect((await paymentOf(orderId)).status).toBe(local);
         expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
         expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
       },
@@ -246,7 +259,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
           .set({ status: 'APPROVED', approvedAt: at, createdAt: new Date(at.getTime() - 60_000) })
           .where(eq(payments.orderId, o.orderId));
         await checkedAgo(o.orderId, checkedHoursAgo === null ? null : checkedHoursAgo * 3600);
-        approve(o.paymentId, { dateApproved: at });
+        approve(o.paymentId, { dateLastUpdated: at });
         return o;
       };
       const approvedOld = await approved(8, null);
@@ -268,7 +281,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       const { orderId, paymentId: pendingId } = await orderWithPix(v.id);
       await checkedAgo(orderId, 60);
       const total = RECONCILIATION_BATCH + 5;
-      const ids = Array.from({ length: total }, (_, i) => String(2_000_000 + i));
+      const ids = Array.from({ length: total }, (_, i) => fakeOrderId(2_000_000 + i));
       const at = new Date(Date.now() - 86_400_000);
       await ctx.db.insert(payments).values(
         ids.map((id) => ({
@@ -284,11 +297,11 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       for (const id of ids) {
         mp.remote.set(id, {
           id,
-          status: 'approved',
+          ...mpStatus.approved,
           externalReference: orderId,
           amountCents: 100,
+          paidAmountCents: 100,
           currency: 'BRL',
-          dateApproved: at,
           dateLastUpdated: at,
         });
       }
@@ -392,7 +405,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await orderStatus(orderId)).toBe('PAID');
       await checkedAgo(orderId, 7 * 3600);
       const before = (await paymentOf(orderId)).lastCheckedAt;
-      setRemote(paymentId, { status: 'charged_back' });
+      setRemote(paymentId, mpStatus.chargedBack);
       mp.getSpy.mockRejectedValueOnce(new PixProviderError('Mercado Pago indisponível (rede).'));
 
       expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
@@ -654,7 +667,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       await ctx.db.insert(payments).values(
         brokenOrders.map((o, i) => ({
           orderId: o.id,
-          providerPaymentId: String(3_000_000 + i),
+          providerPaymentId: fakeOrderId(3_000_000 + i),
           status: 'PENDING' as const,
           amountCents: 100,
           expiresAt: new Date(Date.now() + 20 * 60_000),
@@ -723,21 +736,21 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
   });
 
   describe('status nunca regride', () => {
-    it('cancelled ou rejected atrasado sobre APPROVED ou REFUNDED não muda nada', async () => {
+    it('canceled ou failed atrasado sobre APPROVED ou REFUNDED não muda nada', async () => {
       const v = await variantWithStock('05-camiseta-preta', 3);
       const approvedOrder = await orderWithPix(v.id);
       const refundedOrder = await orderWithPix(v.id);
       for (const o of [approvedOrder, refundedOrder]) approve(o.paymentId);
       await reconciliation.reconcile();
-      setRemote(refundedOrder.paymentId, { status: 'refunded' });
+      setRemote(refundedOrder.paymentId, mpStatus.refunded);
       await webhook(refundedOrder.paymentId).expect(200);
       const approvedRow = await paymentOf(approvedOrder.orderId);
       const refundedRow = await paymentOf(refundedOrder.orderId);
       expect(refundedRow.status).toBe('REFUNDED');
 
-      for (const late of ['cancelled', 'rejected']) {
-        setRemote(approvedOrder.paymentId, { status: late });
-        setRemote(refundedOrder.paymentId, { status: late });
+      for (const late of [mpStatus.canceled, mpStatus.expired, mpStatus.rejected]) {
+        setRemote(approvedOrder.paymentId, late);
+        setRemote(refundedOrder.paymentId, late);
         await webhook(approvedOrder.paymentId).expect(200);
         await webhook(refundedOrder.paymentId).expect(200);
       }
@@ -752,11 +765,11 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       const v = await variantWithStock('05-camiseta-preta', 3);
       // Estornada antes de ser vista aprovada (pedido nunca pago) e estornada depois de paga.
       const neverPaid = await orderWithPix(v.id);
-      setRemote(neverPaid.paymentId, { status: 'refunded' });
+      setRemote(neverPaid.paymentId, mpStatus.refunded);
       const paid = await orderWithPix(v.id);
       approve(paid.paymentId);
       await reconciliation.reconcile();
-      setRemote(paid.paymentId, { status: 'refunded' });
+      setRemote(paid.paymentId, mpStatus.refunded);
       await webhook(paid.paymentId).expect(200);
       const rows = [await paymentOf(neverPaid.orderId), await paymentOf(paid.orderId)];
       expect(rows.map((r) => r.status)).toEqual(['REFUNDED', 'REFUNDED']);
@@ -780,7 +793,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
     it('PENDING que o MP já mostra refunded vira REFUNDED, sem alerta, com warn', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);
-      setRemote(paymentId, { status: 'refunded' });
+      setRemote(paymentId, mpStatus.refunded);
 
       await reconciliation.reconcile();
 
@@ -798,19 +811,20 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
 
   describe('estorno ou contestação depois de pago (PAYMENT_REVERSED)', () => {
     it.each([
-      ['refunded', 'REFUNDED'],
-      ['charged_back', 'APPROVED'],
-      ['in_mediation', 'APPROVED'],
-    ])(
+      ['refunded/refunded', 'REFUNDED', mpStatus.refunded],
+      ['charged_back/in_process', 'APPROVED', mpStatus.chargedBack],
+      ['charged_back/settled', 'APPROVED', { status: 'charged_back', statusDetail: 'settled' }],
+      ['processed/partially_refunded', 'APPROVED', mpStatus.partiallyRefunded],
+    ] as const)(
       'MP %s → alerta, cobrança %s, pedido e estoque intactos; repetir não grava nada',
-      async (status, local) => {
+      async (_label, local, remoteStatus) => {
         const v = await variantWithStock('05-camiseta-preta', 3);
         const { orderId, paymentId } = await orderWithPix(v.id);
         approve(paymentId);
         await reconciliation.reconcile();
         expect(await orderStatus(orderId)).toBe('PAID');
 
-        setRemote(paymentId, { status });
+        setRemote(paymentId, remoteStatus);
         await checkedAgo(orderId, 7 * 3600);
         await reconciliation.reconcile();
 
@@ -837,7 +851,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       await webhook(paymentId).expect(200);
       expect(await alertsOf(orderId)).toEqual(['PAID_AFTER_EXPIRY']);
 
-      setRemote(paymentId, { status: 'refunded' });
+      setRemote(paymentId, mpStatus.refunded);
       await webhook(paymentId).expect(200);
       await webhook(paymentId).expect(200);
       await checkedAgo(orderId, null);
@@ -876,31 +890,35 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
     });
   });
 
-  describe('aprovação sem date_approved', () => {
-    it('usa date_last_updated, com warn', async () => {
+  describe('momento da aprovação (a API de Orders não tem data de aprovação)', () => {
+    it('usa o last_updated_date da order na primeira vez que ela aparece aprovada', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);
       const expiresAt = new Date(Date.now() - 60_000);
       await ctx.db.update(orders).set({ expiresAt }).where(eq(orders.id, orderId));
       const lastUpdated = new Date(expiresAt.getTime() - 5000);
-      approve(paymentId, { dateApproved: null, dateLastUpdated: lastUpdated });
+      approve(paymentId, { dateLastUpdated: lastUpdated });
 
       await reconciliation.reconcile();
 
       // Pago dentro do prazo pela data do Mercado Pago, não pela hora da conciliação.
       expect(await orderStatus(orderId)).toBe('PAID');
       expect((await paymentOf(orderId)).approvedAt).toEqual(lastUpdated);
-      expect(warnings()).toContainEqual(expect.stringMatching(/date_last_updated/));
+
+      // Mudança posterior na order (ex.: estorno) não mexe no momento da aprovação.
+      setRemote(paymentId, { ...mpStatus.refunded, dateLastUpdated: new Date() });
+      await webhook(paymentId).expect(200);
+      expect((await paymentOf(orderId)).approvedAt).toEqual(lastUpdated);
     });
 
-    it('sem as duas datas, usa a hora atual, com warn', async () => {
+    it('sem last_updated_date, usa a hora atual, com warn', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);
       await ctx.db
         .update(orders)
         .set({ expiresAt: new Date(Date.now() - 60_000) })
         .where(eq(orders.id, orderId));
-      approve(paymentId, { dateApproved: null, dateLastUpdated: null });
+      approve(paymentId, { dateLastUpdated: null });
       const before = Date.now();
 
       await reconciliation.reconcile();
@@ -951,19 +969,23 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect((await paymentOf(orderId)).status).toBe('PENDING');
       expect(warnings().some((w) => w.includes(paymentId))).toBe(true);
 
-      setRemote(paymentId, { status: 'cancelled' });
+      setRemote(paymentId, mpStatus.expired);
       await reconciliation.reconcile();
       expect((await paymentOf(orderId)).status).toBe('CANCELLED');
     });
 
-    it('MP responde que o Pix já foi aprovado → PAID_AFTER_EXPIRY, estoque intacto', async () => {
+    it('MP recusa o cancelamento porque a order já foi paga → GET → PAID_AFTER_EXPIRY, estoque intacto', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);
-      approve(paymentId, { dateApproved: later() });
+      approve(paymentId, { dateLastUpdated: later() });
 
       await ctx.app.get(OrderExpirationService).run(later());
 
       expect(mp.cancelSpy).toHaveBeenCalledWith(paymentId);
+      await expect(mp.cancelSpy.mock.results[0].value).rejects.toMatchObject({
+        notCancellable: true,
+      });
+      expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
       expect(await orderStatus(orderId)).toBe('EXPIRED');
       expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 0 });
       expect(await paymentOf(orderId)).toMatchObject({
@@ -1090,6 +1112,11 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         });
 
         expect(mp.cancelSpy).toHaveBeenCalledTimes(1);
+        // A order já paga não é cancelável: o estado real vem do GET (spec-021).
+        await expect(mp.cancelSpy.mock.results[0].value).rejects.toMatchObject({
+          notCancellable: true,
+        });
+        expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
         expect(await orderStatus(orderId)).toBe('PAID');
         expect(await paymentOf(orderId)).toMatchObject({ status: 'APPROVED', alert: null });
         expect(await alertsOf(orderId)).toEqual([]);
@@ -1221,7 +1248,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         expect(await chargesOf(orderId)).toEqual([]);
         expect(mp.cancelSpy).toHaveBeenCalledTimes(1);
         expect(mp.cancelSpy).toHaveBeenCalledWith(createdId);
-        expect(mp.remote.get(createdId)?.status).toBe('cancelled');
+        expect(mp.remote.get(createdId)?.status).toBe('canceled');
         expect(await orderStatus(orderId)).toBe(to);
         expect(await stockOf(v.id)).toEqual(stock);
       },
@@ -1304,6 +1331,166 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         expect(await alertsOf(orderId)).toEqual([alert]);
       },
     );
+  });
+
+  describe('order já cancelada no Mercado Pago (spec-021)', () => {
+    it.each<OrderStatus>(['PAID', 'CANCELED'])(
+      'painel → %s: order_already_canceled → GET → cobrança CANCELLED e o painel grava',
+      async (to) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        // Cancelada do lado do MP (ex.: o expiration_time venceu) sem a loja ter visto.
+        setRemote(paymentId, mpStatus.canceled);
+
+        const res = await ctx.app.get(AdminOrdersService).updateStatus(orderId, to);
+
+        expect(res.status).toBe(to);
+        await expect(mp.cancelSpy.mock.results[0].value).rejects.toMatchObject({
+          message: expect.stringMatching(/order_already_canceled/),
+          notCancellable: true,
+        });
+        expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
+        expect((await paymentOf(orderId)).status).toBe('CANCELLED');
+        expect(await orderStatus(orderId)).toBe(to);
+        expect(await alertsOf(orderId)).toEqual([]);
+      },
+    );
+
+    it('expiração: order_already_canceled → GET → cobrança CANCELLED, sem alerta', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      mp.cancelSpy.mockRejectedValueOnce(notCancellable('order_already_canceled'));
+      setRemote(paymentId, mpStatus.expired);
+
+      await ctx.app.get(OrderExpirationService).run(new Date(Date.now() + 31 * 60_000));
+
+      expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
+      expect((await paymentOf(orderId)).status).toBe('CANCELLED');
+      expect(await orderStatus(orderId)).toBe('EXPIRED');
+      expect(await alertsOf(orderId)).toEqual([]);
+      expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 0 });
+    });
+
+    it('recusa do cancelamento seguida de falha no GET: failed, 502 no painel, nada muda', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      mp.cancelSpy.mockRejectedValueOnce(notCancellable('invalid_order_status'));
+      mp.getSpy.mockRejectedValueOnce(new PixProviderError('Mercado Pago respondeu 500.'));
+
+      await expect(ctx.app.get(AdminOrdersService).updateStatus(orderId, 'PAID')).rejects.toThrow(
+        /Não foi possível cancelar o Pix/,
+      );
+
+      expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+      expect((await paymentOf(orderId)).status).toBe('PENDING');
+      expect(warnings().some((w) => w.includes(paymentId) && w.includes(orderId))).toBe(true);
+    });
+  });
+
+  describe('estorno parcial visto antes da aprovação (spec-021)', () => {
+    it('PENDING que o MP já mostra processed/partially_refunded: paga o pedido e alerta PAYMENT_REVERSED', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, { ...mpStatus.partiallyRefunded, dateLastUpdated: new Date() });
+
+      await reconciliation.reconcile();
+
+      expect(await orderStatus(orderId)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'APPROVED',
+        alert: 'PAYMENT_REVERSED',
+      });
+      expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+    });
+  });
+
+  describe('id antigo, de antes da API de Orders (spec-021, só no banco local)', () => {
+    const LEGACY_ID = '5466310457';
+
+    /** Pedido com Pix pendente cujo id no provedor é numérico, como os da API de Pagamentos. */
+    async function orderWithLegacyPix(variantId: string) {
+      const o = await orderWithPix(variantId);
+      await ctx.db
+        .update(payments)
+        .set({ providerPaymentId: LEGACY_ID })
+        .where(eq(payments.orderId, o.orderId));
+      return { orderId: o.orderId, paymentRowId: (await paymentOf(o.orderId)).id };
+    }
+
+    it('conciliação pula: sem chamar o MP, sem contar falha, sem RECONCILIATION_STOPPED, um log e 24 h fora', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 3);
+      const { orderId, paymentRowId } = await orderWithLegacyPix(v.id);
+      const healthy = await orderWithPix(v.id);
+      approve(healthy.paymentId);
+      const before = Date.now();
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      // Nas rodadas seguintes, mesmo sem o filtro dos 20 s, o id antigo fica fora por 24 h.
+      for (let round = 0; round < RECONCILIATION_MAX_FAILURES; round++) {
+        await checkedAgo(orderId, null);
+        expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+      }
+
+      expect(checkedIds()).toEqual([healthy.paymentId]);
+      expect(await orderStatus(healthy.orderId)).toBe('PAID');
+      const row = await paymentOf(orderId);
+      expect(row).toMatchObject({ status: 'PENDING', checkFailures: 0, alert: null });
+      const pause = row.nextCheckAt!.getTime() - before;
+      expect(pause).toBeGreaterThan(LEGACY_ID_PAUSE_HOURS * 3600_000 - 60_000);
+      expect(pause).toBeLessThan(LEGACY_ID_PAUSE_HOURS * 3600_000 + 60_000);
+      expect(await alertsOf(orderId)).toEqual([]);
+      const skipped = warnings().filter((w) => w.includes('pulada'));
+      expect(skipped).toHaveLength(1);
+      expect(skipped[0]).toContain(paymentRowId);
+      expect(skipped[0]).not.toContain(LEGACY_ID);
+      for (const w of warnings()) {
+        expect(w).not.toContain(customer.email);
+        expect(w).not.toContain(customer.name);
+      }
+    });
+
+    it(`${RECONCILIATION_BATCH} ou mais ids antigos não ocupam o lote no lugar de um pagamento válido`, async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const healthy = await orderWithPix(v.id);
+      // Conferido há 1 min: sem a prioridade, os ids antigos nunca conferidos viriam antes dele.
+      await checkedAgo(healthy.orderId, 60);
+      approve(healthy.paymentId);
+      const at = new Date(Date.now() - 86_400_000);
+      await ctx.db.insert(payments).values(
+        Array.from({ length: RECONCILIATION_BATCH + 5 }, (_, i) => ({
+          orderId: healthy.orderId,
+          providerPaymentId: String(4_000_000 + i),
+          status: 'APPROVED' as const,
+          amountCents: 100,
+          expiresAt: at,
+          approvedAt: at,
+          createdAt: at,
+        })),
+      );
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      expect(checkedIds()).toEqual([healthy.paymentId]);
+      expect(await orderStatus(healthy.orderId)).toBe('PAID');
+      // As vagas que sobraram no lote foram para ids antigos, pulados e estacionados.
+      expect(warnings().filter((w) => w.includes('pulada'))).toHaveLength(RECONCILIATION_BATCH - 1);
+    });
+
+    it('verificação sob demanda pula: sem chamar o MP e sem erro para a loja', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentRowId } = await orderWithLegacyPix(v.id);
+      await checkedAgo(orderId, null);
+
+      const res = await http()
+        .get(`/api/orders/${orderId}/pix`)
+        .set('X-Forwarded-For', nextIp())
+        .expect(200);
+
+      expect(res.body).toMatchObject({ status: 'PENDING', orderStatus: 'PENDING_PAYMENT' });
+      expect(mp.getSpy).not.toHaveBeenCalled();
+      expect((await paymentOf(orderId)).checkFailures).toBe(0);
+      expect(warnings().some((w) => w.includes(paymentRowId) && w.includes('pulada'))).toBe(true);
+    });
   });
 
   describe('limite de requisições', () => {

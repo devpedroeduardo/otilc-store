@@ -59,16 +59,15 @@ Você vai colar estes dois valores no painel do Render (passo 4). Não os salve 
 2. Escolha o plano pago no painel; sem escolha, o Render usa `0.5c-512mb`.
 3. Preencha as variáveis marcadas como "sem valor" (`sync: false`) direto no painel:
 
-   | Variável              | O que colocar                                                                                                               |
-   | --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-   | `DATABASE_URL`        | Connection string do session pooler (passo 3)                                                                               |
-   | `DATABASE_CA_CERT`    | Conteúdo PEM do certificado raiz do Supabase (passo 3)                                                                      |
-   | `WEB_ORIGIN`          | Por ora, `https://placeholder.example.com`: o valor real entra no passo 6. Até lá, o login do admin não funciona            |
-   | `MP_ACCESS_TOKEN`     | Access token de **teste** do Mercado Pago                                                                                   |
-   | `MP_WEBHOOK_SECRET`   | Assinatura secreta do webhook de teste do Mercado Pago                                                                      |
-   | `MP_NOTIFICATION_URL` | `<URL do Render>/api/webhooks/mercadopago` (a URL aparece no painel do serviço depois de criado; edite e salve se precisar) |
+   | Variável            | O que colocar                                                                                                    |
+   | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+   | `DATABASE_URL`      | Connection string do session pooler (passo 3)                                                                    |
+   | `DATABASE_CA_CERT`  | Conteúdo PEM do certificado raiz do Supabase (passo 3)                                                           |
+   | `WEB_ORIGIN`        | Por ora, `https://placeholder.example.com`: o valor real entra no passo 6. Até lá, o login do admin não funciona |
+   | `MP_ACCESS_TOKEN`   | Access token de **teste** do Mercado Pago                                                                        |
+   | `MP_WEBHOOK_SECRET` | Assinatura secreta do webhook de teste do Mercado Pago                                                           |
 
-   `NODE_ENV=production` já vem no `render.yaml`. `PORT`, `ORDER_HOLD_MINUTES` e `PAYMENT_RECONCILIATION_INTERVAL_MS` ficam no padrão.
+   `NODE_ENV=production` já vem no `render.yaml`. `PORT`, `ORDER_HOLD_MINUTES` e `PAYMENT_RECONCILIATION_INTERVAL_MS` ficam no padrão. A URL do webhook do Mercado Pago não é variável: ela é configurada no painel do Mercado Pago (passo 6, item 2).
 
 4. Acompanhe o primeiro deploy em **Events/Logs**:
    - O **Pre-Deploy** roda o migrator e aplica `0004` e `0005` (tabelas de pagamento; valor de enum, tabela de alertas e índice). Deve terminar sem erro.
@@ -94,9 +93,8 @@ Você vai colar estes dois valores no painel do Render (passo 4). Não os salve 
 ## 6. Fechar o circuito: `WEB_ORIGIN` e webhook do Mercado Pago
 
 1. Render → `otilc-api` → **Environment** → edite `WEB_ORIGIN` para a URL da Vercel, **com https e sem barra final** (ex. fictício: `https://loja.example.com`). Salve: o Render reinicia a API. O CORS e a verificação de `Origin` do admin só aceitam essa origem.
-2. Confira `MP_NOTIFICATION_URL` = `<URL do Render>/api/webhooks/mercadopago`.
-3. Painel do Mercado Pago → Suas integrações → sua aplicação → **Webhooks** (modo de testes): configure a URL `<URL do Render>/api/webhooks/mercadopago` e marque o evento de pagamentos. A assinatura secreta gerada ali é o `MP_WEBHOOK_SECRET` (se mudar, atualize no Render).
-4. As credenciais ficam de **teste** até você decidir o lançamento; nessa hora é só trocar `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` (e o webhook) pelas de produção.
+2. Painel do Mercado Pago → Suas integrações → sua aplicação → **Webhooks → Configurar notificações**: nas abas **modo de teste** e **modo de produção**, configure a URL `<URL do Render>/api/webhooks/mercadopago` e marque o evento **Order (Mercado Pago)** (a loja usa a API de Orders; notificações de Pagamentos são ignoradas). A API de Orders não leva URL de notificação na order: este painel é o único lugar da URL. A assinatura secreta gerada ali é o `MP_WEBHOOK_SECRET` (se mudar, atualize no Render).
+3. As credenciais ficam de **teste** até você decidir o lançamento; nessa hora é só trocar `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` (e o webhook) pelas de produção.
 
 O timer de conciliação de Pix roda dentro da API (a cada 5 minutos por padrão), sem configuração extra.
 
@@ -104,7 +102,7 @@ O timer de conciliação de Pix roda dentro da API (a cada 5 minutos por padrão
 
 Depois do primeiro deploy (e do passo 6, para conseguir entrar no painel), crie o primeiro usuário do painel com o script que já existe (ADR 0002). Ele roda no **seu computador**, na raiz do repositório, e fala direto com o banco do Supabase:
 
-1. Num terminal interativo, exporte as variáveis na sessão do shell, **sem criar arquivo `.env` e sem colar valores em nenhum lugar versionado**. O script carrega a configuração de produção inteira, então precisa de todas estas, com os mesmos valores do painel do Render: `NODE_ENV=production`, `DATABASE_URL` (session pooler), `DATABASE_CA_CERT`, `WEB_ORIGIN`, `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `MP_NOTIFICATION_URL`. Os valores de uma linha (`DATABASE_URL`, `WEB_ORIGIN`, as `MP_*`) você digita sem eco, por exemplo `read -rs DATABASE_URL && export DATABASE_URL`. O `DATABASE_CA_CERT` é PEM de várias linhas, e o `read` lê só uma: use o `.crt` baixado no passo 3, que preserva as quebras de linha, com `export DATABASE_CA_CERT="$(cat CAMINHO/DO/ARQUIVO.crt)"`. No histórico do shell fica só o caminho, não o certificado. Depois apague o arquivo `.crt` baixado.
+1. Num terminal interativo, exporte as variáveis na sessão do shell, **sem criar arquivo `.env` e sem colar valores em nenhum lugar versionado**. O script carrega a configuração de produção inteira, então precisa de todas estas, com os mesmos valores do painel do Render: `NODE_ENV=production`, `DATABASE_URL` (session pooler), `DATABASE_CA_CERT`, `WEB_ORIGIN`, `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET`. Os valores de uma linha (`DATABASE_URL`, `WEB_ORIGIN`, as `MP_*`) você digita sem eco, por exemplo `read -rs DATABASE_URL && export DATABASE_URL`. O `DATABASE_CA_CERT` é PEM de várias linhas, e o `read` lê só uma: use o `.crt` baixado no passo 3, que preserva as quebras de linha, com `export DATABASE_CA_CERT="$(cat CAMINHO/DO/ARQUIVO.crt)"`. No histórico do shell fica só o caminho, não o certificado. Depois apague o arquivo `.crt` baixado.
 2. Rode `npm run admin:create -w @otilc/api`. O script pergunta os dados pelo terminal e pede a senha sem eco; não aceita argumentos.
 3. Feche o terminal (ou rode `unset` nas variáveis) e entre em `<URL da Vercel>/admin/login` para conferir.
 

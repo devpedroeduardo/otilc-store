@@ -65,7 +65,20 @@ export type PixErrorResponse = z.infer<typeof pixErrorResponseSchema>;
 // Webhook do Mercado Pago (`POST /api/webhooks/mercadopago`)
 // ---------------------------------------------------------------------------
 
-/** Id do recurso notificado. Pagamentos têm id numérico; outros tipos podem ser alfanuméricos. */
+/**
+ * Id de uma order do Mercado Pago (API de Orders, spec-021): `ORD` seguido de letras maiúsculas e
+ * dígitos (ex.: `ORD01JP84C939T20S0P1DN382FQ6K`). É o id guardado em `payments.provider_payment_id`
+ * e o único aceito nas chamadas ao Mercado Pago e nas notificações `type=order`.
+ */
+export const mercadoPagoOrderIdSchema = z
+  .string()
+  .regex(/^ORD[0-9A-Z]{26,40}$/, 'Id de order inválido.');
+
+/**
+ * Id do recurso notificado, de qualquer tipo. Só depois de saber que a notificação é `type=order`
+ * o id passa por `mercadoPagoOrderIdSchema`: outros tipos (ex.: `payment`, de id numérico) são
+ * ignorados com `200`, sem erro.
+ */
 const notificationResourceId = z
   .string()
   .trim()
@@ -85,7 +98,7 @@ export type MercadoPagoWebhookQuery = z.infer<typeof mercadoPagoWebhookQuerySche
 
 /**
  * Corpo da notificação. Só `type` e `data.id` são lidos; o resto (inclusive qualquer status)
- * é descartado. O status do pagamento vem sempre da consulta à API do Mercado Pago.
+ * é descartado. O status vem sempre da consulta à order na API do Mercado Pago.
  */
 export const mercadoPagoWebhookBodySchema = z.object({
   type: z.string().trim().min(1).max(64),

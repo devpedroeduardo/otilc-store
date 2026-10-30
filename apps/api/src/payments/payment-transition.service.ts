@@ -6,6 +6,7 @@ import { applyStockEffect, stockEffects } from '../orders/order-stock';
 import {
   PIX_PROVIDER,
   PixProviderError,
+  isReversal,
   toChargeStatus,
   type PixProvider,
   type ProviderPayment,
@@ -24,9 +25,6 @@ export type SyncOutcome =
   | 'payment_reversed';
 
 type PaymentAlert = (typeof paymentAlert.enumValues)[number];
-
-/** Status do Mercado Pago que desfazem um pagamento já aprovado (estorno ou contestação). */
-const REVERSED_STATUSES = new Set(['refunded', 'charged_back', 'in_mediation']);
 
 /**
  * Pagamento aprovado que não pagou o pedido ganha um alerta; o estorno é manual. Os alertas se
@@ -137,10 +135,12 @@ export class PaymentTransitionService {
           .where(eq(payments.id, payment.id));
       }
 
-      if (payment.status === 'APPROVED' && REVERSED_STATUSES.has(remote.status)) {
-        // Estornado ou contestado depois de pago: só alerta, o pedido não muda (estorno manual).
-        // Um alerta anterior (ex.: PAID_AFTER_EXPIRY) continua gravado ao lado deste.
-        if (remote.status === 'refunded') {
+      const status = toChargeStatus(remote.status, remote.statusDetail);
+      const reversed = isReversal(remote.status, remote.statusDetail);
+      if (payment.status === 'APPROVED' && reversed) {
+        // Estornado (todo ou em parte) ou contestado depois de pago: só alerta, o pedido não muda
+        // (estorno manual). Um alerta anterior (ex.: PAID_AFTER_EXPIRY) fica gravado ao lado.
+        if (status === 'REFUNDED') {
           await tx
             .update(payments)
             .set({ status: 'REFUNDED', updatedAt: new Date() })
@@ -155,10 +155,9 @@ export class PaymentTransitionService {
         return 'payment_reversed';
       }
 
-      const status = toChargeStatus(remote.status);
       if (!status) {
         this.logger.warn(
-          `Status "${remote.status}" desconhecido no pagamento ${providerPaymentId}; nada mudou.`,
+          `Status "${remote.status}/${remote.statusDetail ?? ''}" sem efeito no pagamento ${providerPaymentId}; nada mudou.`,
         );
         return 'unknown_status';
       }
@@ -166,7 +165,7 @@ export class PaymentTransitionService {
       if (status !== 'APPROVED') {
         // Só uma cobrança PENDING encerra por aqui. Nunca volta para PENDING (colidiria com uma
         // tentativa nova do mesmo pedido), e APPROVED ou REFUNDED não regridem com uma resposta
-        // atrasada (ex.: `cancelled` do PUT); APPROVED só vira REFUNDED pelo estorno, acima.
+        // atrasada (ex.: `canceled` do cancelamento); APPROVED só vira REFUNDED pelo estorno, acima.
         if (payment.status !== 'PENDING' || status === 'PENDING') return 'updated';
         if (status === 'REFUNDED') {
           // Aprovado e estornado entre duas consultas: o pedido nunca foi pago, sem alerta.
@@ -188,6 +187,7 @@ export class PaymentTransitionService {
       const matches =
         remote.externalReference === order.id &&
         remote.amountCents === order.totalCents &&
+        (remote.paidAmountCents === null || remote.paidAmountCents === order.totalCents) &&
         remote.currency === 'BRL';
 
       let outcome: SyncOutcome;
@@ -222,25 +222,28 @@ export class PaymentTransitionService {
           alert,
         });
       }
+      if (reversed) {
+        // Vista pela primeira vez já com estorno parcial (`processed/partially_refunded`).
+        await this.recordAlert(tx, {
+          paymentId: payment.id,
+          providerPaymentId,
+          orderId: order.id,
+          alert: 'PAYMENT_REVERSED',
+        });
+      }
       return outcome;
     });
   }
 
   /**
-   * Momento da aprovação: `date_approved`; sem ele, `date_last_updated`; sem os dois, agora. Os
-   * dois últimos ficam no log, porque decidem se o pagamento entrou no prazo do pedido.
+   * Momento da aprovação: o `last_updated_date` da order na primeira vez que a vemos aprovada
+   * (este método só roda na passagem de PENDING para APPROVED). A referência do
+   * `GET /v1/orders/{id}` não traz data de aprovação, nem na order nem na transação (spec-021).
+   * Sem a data, vale a hora atual, e isso vai para o log: decide se o pagamento entrou no prazo.
    */
   private approvedAt(remote: ProviderPayment): Date {
-    if (remote.dateApproved) return remote.dateApproved;
-    if (remote.dateLastUpdated) {
-      this.logger.warn(
-        `Pagamento ${remote.id} aprovado sem date_approved; usado date_last_updated.`,
-      );
-      return remote.dateLastUpdated;
-    }
-    this.logger.warn(
-      `Pagamento ${remote.id} aprovado sem date_approved nem date_last_updated; usada a hora atual.`,
-    );
+    if (remote.dateLastUpdated) return remote.dateLastUpdated;
+    this.logger.warn(`Pagamento ${remote.id} aprovado sem last_updated_date; usada a hora atual.`);
     return new Date();
   }
 
@@ -253,7 +256,7 @@ export class PaymentTransitionService {
    * Com `reopen`, o alerta repetido que o admin já resolveu volta a abrir, com `created_at` novo,
    * e vai para o log como novo; aberto, segue intacto (spec-018). Só a conciliação reabre: ela
    * só chega ao teto de novo depois de o contador ter sido zerado. `PAYMENT_REVERSED` é regravado
-   * em toda sincronização de um `charged_back`/`in_mediation` e reabriria sempre.
+   * em toda sincronização de um `charged_back` ou estorno parcial e reabriria sempre.
    */
   async recordAlert(
     tx: Pick<Database, 'insert' | 'update'>,

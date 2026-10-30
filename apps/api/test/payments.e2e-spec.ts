@@ -13,7 +13,7 @@ import {
   type MercadoPagoClient,
   type ProviderPayment,
 } from '../src/payments/mercadopago.client';
-import { setupPixTestApp, signature } from './pix-setup';
+import { fakeOrderId, mpStatus, notCancellable, setupPixTestApp, signature } from './pix-setup';
 import { resetData, setupTestApp, teardownTestApp, type TestContext } from './setup';
 
 const MISSING_ID = '00000000-0000-4000-8000-000000000000';
@@ -44,22 +44,22 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
     await ctx.db.execute(sql`TRUNCATE payment_notifications`);
     remote = new Map();
     const byKey = new Map<string, string>();
-    let nextId = 1_000_000;
+    let next = 1_000_000;
     createSpy = jest.spyOn(client, 'createPixPayment').mockImplementation(async (input) => {
-      // Como o Mercado Pago: a mesma chave de idempotência devolve o mesmo pagamento.
+      // Como o Mercado Pago: a mesma chave de idempotência devolve a mesma order.
       await sleep(30);
       let id = byKey.get(input.idempotencyKey);
       if (!id) {
-        id = String(nextId++);
+        id = fakeOrderId(next++);
         byKey.set(input.idempotencyKey, id);
         remote.set(id, {
           id,
-          status: 'pending',
+          ...mpStatus.pending,
           externalReference: input.orderId,
           amountCents: input.amountCents,
+          paidAmountCents: null,
           currency: 'BRL',
-          dateApproved: null,
-          dateLastUpdated: null,
+          dateLastUpdated: new Date(),
         });
       }
       return { ...remote.get(id)!, qrCode: `00020126-pix-ficticio-${id}`, qrCodeBase64: QR_BASE64 };
@@ -70,12 +70,14 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       if (!payment) throw new PixProviderError('Mercado Pago respondeu 404.');
       return { ...payment };
     });
-    // O painel cancela o Pix pendente antes de marcar pago (spec-019); aprovado continua aprovado.
+    // O painel cancela o Pix pendente antes de marcar pago (spec-019); order já paga não é
+    // cancelável, e o estado real vem do GET.
     jest.spyOn(client, 'cancelPayment').mockImplementation(async (id) => {
       await sleep(10);
       const payment = remote.get(id);
       if (!payment) throw new PixProviderError('Mercado Pago respondeu 404.');
-      if (payment.status === 'pending') remote.set(id, { ...payment, status: 'cancelled' });
+      if (payment.status !== 'action_required') throw notCancellable('invalid_order_status');
+      remote.set(id, { ...payment, ...mpStatus.canceled });
       return { ...remote.get(id)! };
     });
   });
@@ -100,13 +102,13 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
   ) {
     const requestId = opts.requestId ?? randomUUID();
     const req = http()
-      .post(`/api/webhooks/mercadopago?${opts.query ?? `data.id=${dataId}&type=payment`}`)
+      .post(`/api/webhooks/mercadopago?${opts.query ?? `data.id=${dataId}&type=order`}`)
       .set('X-Forwarded-For', nextIp())
       .set('x-request-id', requestId);
     const sig = opts.sig === undefined ? signature(dataId, requestId, opts.ts) : opts.sig;
     if (sig !== null) req.set('x-signature', sig);
     return req.send(
-      opts.body ?? { type: 'payment', action: 'payment.updated', data: { id: dataId } },
+      opts.body ?? { type: 'order', action: 'order.processed', data: { id: dataId } },
     );
   }
 
@@ -131,7 +133,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
     return res.body as { id: string; totalCents: number; expiresAt: string };
   }
 
-  /** Pedido com cobrança Pix pendente; devolve o id do pagamento no provedor. */
+  /** Pedido com cobrança Pix pendente; devolve o id da order no provedor. */
   async function orderWithPix(variantId: string, quantity = 1) {
     const order = await placeOrder([{ variantId, quantity }]);
     await createPix(order.id).expect(201);
@@ -140,7 +142,12 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
   }
 
   function approve(id: string, over: Partial<ProviderPayment> = {}) {
-    remote.set(id, { ...remote.get(id)!, status: 'approved', dateApproved: new Date(), ...over });
+    remote.set(id, {
+      ...remote.get(id)!,
+      ...mpStatus.approved,
+      dateLastUpdated: new Date(),
+      ...over,
+    });
   }
 
   async function stockOf(id: string) {
@@ -186,20 +193,23 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       });
       expect(createSpy).toHaveBeenCalledTimes(1);
       const input = createSpy.mock.calls[0][0];
-      expect(input).toMatchObject({
+      expect(input).toEqual({
         orderId: order.id,
+        orderNumber: expect.any(Number),
         amountCents: v.price * 2,
         payerEmail: customer.email,
-        notificationUrl: 'https://api.example.test/api/webhooks/mercadopago',
+        // Primeiro nome do cliente (no sandbox, "APRO" aprova o Pix sozinho).
+        payerFirstName: 'Ana',
+        expirationTime: 'PT31M',
         idempotencyKey: `otilc-pix-${order.id}-1`,
       });
       // Validade do Pix (pix-expiration.ts, Q13): 30 min + 1 de folga a partir da criação, porque o
       // Mercado Pago exige no mínimo 30 min. O prazo do pedido continua sendo o expiresAt dele.
-      const validity = input.expiresAt.getTime() - before;
+      const row = await paymentOf(order.id);
+      const validity = row.expiresAt.getTime() - before;
       expect(validity).toBeGreaterThanOrEqual(31 * 60_000 - 1000);
       expect(validity).toBeLessThanOrEqual(31 * 60_000 + 5000);
-      const row = await paymentOf(order.id);
-      expect(row.expiresAt.getTime()).toBe(input.expiresAt.getTime());
+      expect(row.providerPaymentId).toMatch(/^ORD[0-9A-Z]{26}$/);
       expect(row.amountCents).toBe(order.totalCents);
 
       const again = await createPix(order.id).expect(200);
@@ -222,7 +232,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
     it('cobrança rejeitada permite uma nova tentativa, com outra chave de idempotência', async () => {
       const v = await variantWithStock('05-camiseta-preta', 3);
       const { order, paymentId } = await orderWithPix(v.id);
-      remote.set(paymentId, { ...remote.get(paymentId)!, status: 'rejected' });
+      remote.set(paymentId, { ...remote.get(paymentId)!, ...mpStatus.rejected });
       await webhook(paymentId).expect(200);
 
       await createPix(order.id).expect(201);
@@ -303,9 +313,45 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { paymentId } = await orderWithPix(v.id);
 
-      await webhook(paymentId, { query: 'type=payment' }).expect(400);
-      await webhook(paymentId, { body: { type: 'payment' } }).expect(400);
-      await webhook(paymentId, { body: { type: 'payment', data: { id: '1' } } }).expect(400);
+      await webhook(paymentId, { query: 'type=order' }).expect(400);
+      await webhook(paymentId, { body: { type: 'order' } }).expect(400);
+      await webhook(paymentId, { body: { type: 'order', data: { id: fakeOrderId(1) } } }).expect(
+        400,
+      );
+      expect(await notificationCount()).toBe(0);
+    });
+
+    it('notificação type=payment (API de Pagamentos) → 200 ignorada, sem consultar nem registrar', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { order, paymentId } = await orderWithPix(v.id);
+      approve(paymentId);
+      const legacyId = '5466310457';
+
+      // Como o Mercado Pago manda enquanto o evento de Pagamentos ainda está ligado no painel.
+      await webhook(legacyId, {
+        query: `data.id=${legacyId}&type=payment`,
+        body: { type: 'payment', action: 'payment.updated', data: { id: Number(legacyId) } },
+      }).expect(200);
+      // Mesmo com o id de uma order nossa, type=payment não é processado.
+      await webhook(paymentId, {
+        query: `data.id=${paymentId}&type=payment`,
+        body: { type: 'payment', action: 'payment.updated', data: { id: paymentId } },
+      }).expect(200);
+
+      expect(getSpy).not.toHaveBeenCalled();
+      expect(await notificationCount()).toBe(0);
+      expect(await orderStatus(order.id)).toBe('PENDING_PAYMENT');
+    });
+
+    it('type=order com data.id fora do formato de order (ex.: numérico) → 400, nada registrado', async () => {
+      for (const id of [
+        '5466310457',
+        'PAY01JP84C939T20S0P1DN382FQ6K',
+        'ord01jp84c939t20s0p1dn382fq6k',
+      ]) {
+        await webhook(id).expect(400);
+      }
+      expect(getSpy).not.toHaveBeenCalled();
       expect(await notificationCount()).toBe(0);
     });
 
@@ -359,7 +405,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       const { order, paymentId } = await orderWithPix(v.id);
 
       await webhook(paymentId, {
-        body: { type: 'payment', status: 'approved', data: { id: paymentId, status: 'approved' } },
+        body: { type: 'order', status: 'processed', data: { id: paymentId, status: 'processed' } },
       }).expect(200);
 
       expect(getSpy).toHaveBeenCalledWith(paymentId);
@@ -384,7 +430,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
     });
 
-    it('tipo diferente de payment e pagamento desconhecido → 200 sem mudar nada', async () => {
+    it('tipo diferente de order e order desconhecida → 200 sem mudar nada', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { order, paymentId } = await orderWithPix(v.id);
       approve(paymentId);
@@ -393,7 +439,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
         query: `data.id=${paymentId}&type=merchant_order`,
         body: { type: 'merchant_order', data: { id: paymentId } },
       }).expect(200);
-      await webhook('424242').expect(200);
+      await webhook(fakeOrderId(424242)).expect(200);
 
       expect(getSpy).not.toHaveBeenCalled();
       expect(await orderStatus(order.id)).toBe('PENDING_PAYMENT');
@@ -403,8 +449,8 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
     it('notificação de pagamento desconhecido não é registrada; a mesma, depois da cobrança gravada, é processada', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const order = await placeOrder([{ variantId: v.id, quantity: 1 }]);
-      // O provedor simulado numera os pagamentos a partir de 1000000 em cada teste.
-      const early = '1000000';
+      // O provedor simulado numera as orders a partir de 1000000 em cada teste.
+      const early = fakeOrderId(1_000_000);
       const requestId = randomUUID();
 
       await webhook(early, { requestId }).expect(200);
@@ -442,7 +488,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       const { order, paymentId } = await orderWithPix(v.id);
       const expiresAt = new Date(Date.now() - 60_000);
       await ctx.db.update(orders).set({ expiresAt }).where(eq(orders.id, order.id));
-      approve(paymentId, { dateApproved: new Date(expiresAt.getTime() - 1000) });
+      approve(paymentId, { dateLastUpdated: new Date(expiresAt.getTime() - 1000) });
 
       await webhook(paymentId).expect(200);
 
@@ -455,7 +501,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       const { order, paymentId } = await orderWithPix(v.id);
       const expiresAt = new Date(Date.now() - 60_000);
       await ctx.db.update(orders).set({ expiresAt }).where(eq(orders.id, order.id));
-      approve(paymentId, { dateApproved: new Date() });
+      approve(paymentId, { dateLastUpdated: new Date() });
 
       await webhook(paymentId).expect(200);
 
@@ -466,7 +512,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
 
     it.each([
       ['valor', { amountCents: 1 }],
-      ['valor fora de centavos', { amountCents: null }],
+      ['valor pago', { paidAmountCents: 1 }],
       ['moeda', { currency: 'USD' }],
       ['referência', { externalReference: MISSING_ID }],
     ])('%s divergente → pedido não muda, alerta AMOUNT_MISMATCH', async (_label, over) => {
