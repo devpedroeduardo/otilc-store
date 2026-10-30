@@ -105,8 +105,11 @@ test('pedido: o duplo mount do StrictMode gera 1 POST /pix e a tela não mostra 
   await expect(page.getByAltText('QR code do Pix')).toBeVisible();
 });
 
-test('pedido: resposta de erro atrasada não troca o QR já na tela', async ({ page }) => {
-  // 1º POST lento e com sucesso; qualquer POST a mais responde erro, e depois dele.
+test('pedido: um erro tardio de um 2º POST não troca o QR já na tela', async ({ page }) => {
+  // 1º POST lento e com sucesso; qualquer POST a mais responde erro, e depois dele. A guarda de
+  // criação em andamento impede esse 2º POST. O descarte por `attempt` em pedido-pix.tsx não tem
+  // caminho real que o exercite (só começa outra criação quando a anterior já terminou), então
+  // não há teste dele.
   const posts: number[] = [];
   await page.route(`**/api/orders/${ORDER_ID}/pix`, async (route) => {
     if (route.request().method() !== 'POST') return json(route, 200, CHARGE);
