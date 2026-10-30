@@ -53,13 +53,10 @@ export function PedidoPix({ orderId }: { orderId: string }) {
   // Criação em andamento: o ref sobrevive ao remount simulado do StrictMode (o estado também),
   // então o efeito que roda duas vezes e os cliques repetidos viram um único POST /pix.
   const creating = useRef(false);
-  // Cada criação que começa invalida as anteriores: resposta velha não mexe na tela.
-  const attempt = useRef(0);
 
   const start = useCallback(async () => {
     if (creating.current) return;
     creating.current = true;
-    const mine = ++attempt.current;
     setView({ kind: 'loading' });
     try {
       const result = await createPixCharge(orderId);
@@ -69,7 +66,7 @@ export function PedidoPix({ orderId }: { orderId: string }) {
         const latest = await getPixCharge(orderId);
         next = latest.kind === 'charge' ? toView(latest) : { kind: 'notPayable' };
       }
-      if (attempt.current === mine) setView(next);
+      setView(next);
     } finally {
       creating.current = false;
     }

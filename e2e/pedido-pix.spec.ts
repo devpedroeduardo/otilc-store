@@ -69,9 +69,10 @@ const json = (route: Route, status: number, body: unknown) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// O `next dev` do E2E liga o reactStrictMode: o efeito da página roda duas vezes (duplo mount),
-// o que é o cenário do achado 2 da homologação da spec-021.
-test('pedido: o duplo mount do StrictMode gera 1 POST /pix e a tela não mostra "Pix indisponível"', async ({
+// Fluxo normal da página do pedido (achado 2 da homologação da spec-021): 1 POST /pix e nenhum
+// "Pix indisponível", nem por um instante. No `next dev` do E2E o efeito roda uma vez só, então
+// este teste não falha sem a guarda de pedido-pix.tsx; ele protege o fluxo contra regressão.
+test('pedido: o fluxo normal gera 1 POST /pix e a tela não mostra "Pix indisponível"', async ({
   page,
 }) => {
   // Se o 2º POST existir, ele chega primeiro e com erro: antes da correção a tela piscava.
@@ -103,30 +104,6 @@ test('pedido: o duplo mount do StrictMode gera 1 POST /pix e a tela não mostra 
     false,
   );
   await expect(page.getByAltText('QR code do Pix')).toBeVisible();
-});
-
-test('pedido: um erro tardio de um 2º POST não troca o QR já na tela', async ({ page }) => {
-  // 1º POST lento e com sucesso; qualquer POST a mais responde erro, e depois dele. A guarda de
-  // criação em andamento impede esse 2º POST. O descarte por `attempt` em pedido-pix.tsx não tem
-  // caminho real que o exercite (só começa outra criação quando a anterior já terminou), então
-  // não há teste dele.
-  const posts: number[] = [];
-  await page.route(`**/api/orders/${ORDER_ID}/pix`, async (route) => {
-    if (route.request().method() !== 'POST') return json(route, 200, CHARGE);
-    posts.push(posts.length + 1);
-    if (posts.length === 1) {
-      await delay(1_500);
-      return json(route, 201, CHARGE);
-    }
-    return json(route, 503, UNAVAILABLE);
-  });
-
-  await page.goto(`/pedido/${ORDER_ID}`);
-  await expect(page.getByAltText('QR code do Pix')).toBeVisible();
-  await page.waitForTimeout(1_000);
-  await expect(page.getByAltText('QR code do Pix')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Pix indisponível' })).toHaveCount(0);
-  expect(posts).toHaveLength(1);
 });
 
 test('pedido: "Tentar de novo" depois de um erro real faz um único POST por clique', async ({
