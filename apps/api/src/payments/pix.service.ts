@@ -12,6 +12,15 @@ import { PIX_EXPIRATION_TIME, pixExpiresAt } from './pix-expiration';
 /** Intervalo mínimo entre duas consultas sob demanda ao Mercado Pago para o mesmo pedido. */
 export const ON_DEMAND_CHECK_SECONDS = 20;
 
+/**
+ * Teto de criações de Pix simultâneas por instância (spec-022). Cada criação segura uma conexão
+ * durante a chamada ao Mercado Pago (até 10 s); com 4 do pool de 10, sobram 6 para o resto da API
+ * (catálogo, checkout, webhook, painel, consultas e os jobs de expiração e conciliação).
+ */
+export const PIX_CREATE_CONCURRENCY = 4;
+/** Espera máxima, em memória e sem conexão, por uma vaga de criação; depois disso, 503. */
+export const PIX_CREATE_WAIT_MS = 5_000;
+
 type PaymentRow = typeof payments.$inferSelect;
 
 /** Resultado da criação feita sob a trava do pedido. */
@@ -22,6 +31,9 @@ type CreateOutcome =
 @Injectable()
 export class PixService {
   private readonly logger = new Logger(PixService.name);
+  /** Última criação de cada pedido nesta instância: as do mesmo pedido entram em fila. */
+  private readonly creating = new Map<string, Promise<void>>();
+  private readonly slots = new Semaphore(PIX_CREATE_CONCURRENCY);
 
   constructor(
     @Inject(DB) private readonly db: Database,
@@ -38,8 +50,44 @@ export class PixService {
    * uma PENDING por pedido continuam barrando gravação duplicada.
    * A gravação revalida o pedido com ele travado; se ele deixou de ser pagável enquanto o Mercado
    * Pago criava o Pix, nada é gravado, o Pix é cancelado lá e a resposta é ORDER_NOT_PAYABLE.
+   * Antes do banco, duas filas em memória poupam o pool de conexões: as chamadas do mesmo pedido
+   * esperam a anterior terminar, e no máximo `PIX_CREATE_CONCURRENCY` criações por instância seguram
+   * conexão ao mesmo tempo. A trava no banco continua valendo entre instâncias.
    */
-  async createCharge(orderId: string): Promise<{ charge: PixChargeDto; created: boolean }> {
+  createCharge(orderId: string): Promise<{ charge: PixChargeDto; created: boolean }> {
+    const previous = this.creating.get(orderId) ?? Promise.resolve();
+    const current = previous.then(() =>
+      this.withSlot(orderId, () => this.createChargeNow(orderId)),
+    );
+    const settled = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.creating.set(orderId, settled);
+    void settled.then(() => {
+      if (this.creating.get(orderId) === settled) this.creating.delete(orderId);
+    });
+    return current;
+  }
+
+  /** Roda `fn` com uma das vagas de criação; sem vaga em `PIX_CREATE_WAIT_MS`, 503. */
+  private async withSlot<T>(orderId: string, fn: () => Promise<T>): Promise<T> {
+    if (!(await this.slots.acquire(PIX_CREATE_WAIT_MS))) {
+      this.logger.warn(
+        `Pix do pedido ${orderId} recusado: ${PIX_CREATE_CONCURRENCY} criações em andamento.`,
+      );
+      throw pixError('PIX_UNAVAILABLE');
+    }
+    try {
+      return await fn();
+    } finally {
+      this.slots.release();
+    }
+  }
+
+  private async createChargeNow(
+    orderId: string,
+  ): Promise<{ charge: PixChargeDto; created: boolean }> {
     const config = pixConfig(this.env);
     const provider = this.provider;
     if (!config || !provider) throw pixError('PIX_UNAVAILABLE');
@@ -247,6 +295,40 @@ export class PixService {
     });
     if (!order) throw new NotFoundException('Pedido não encontrado.');
     return toDto(payment, order);
+  }
+}
+
+/** Semáforo em memória: até `max` vagas; quem não acha vaga espera na fila até `waitMs`. */
+class Semaphore {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(private readonly max: number) {}
+
+  /** `true` com a vaga garantida (devolva com `release`); `false` se a espera esgotou. */
+  acquire(waitMs: number): Promise<boolean> {
+    if (this.active < this.max) {
+      this.active++;
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const grant = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        this.queue.splice(this.queue.indexOf(grant), 1);
+        resolve(false);
+      }, waitMs);
+      this.queue.push(grant);
+    });
+  }
+
+  /** Passa a vaga direto para o próximo da fila, ou a libera. */
+  release(): void {
+    const next = this.queue.shift();
+    if (next) next();
+    else this.active--;
   }
 }
 

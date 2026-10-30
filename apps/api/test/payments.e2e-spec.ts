@@ -13,6 +13,7 @@ import {
   type MercadoPagoClient,
   type ProviderPayment,
 } from '../src/payments/mercadopago.client';
+import { PIX_CREATE_CONCURRENCY, PIX_CREATE_WAIT_MS } from '../src/payments/pix.service';
 import { fakeOrderId, mpStatus, notCancellable, setupPixTestApp, signature } from './pix-setup';
 import { resetData, setupTestApp, teardownTestApp, type TestContext } from './setup';
 
@@ -306,6 +307,69 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
       expect(createSpy).toHaveBeenCalledTimes(2);
       await paymentOf(order.id);
     });
+
+    /** Provedor lento que conta quantas criações estão nele ao mesmo tempo. */
+    function slowCreateCounting(ms: number) {
+      const impl = createSpy.getMockImplementation()!;
+      const inProvider = { now: 0, max: 0 };
+      createSpy.mockImplementation(async (input) => {
+        inProvider.max = Math.max(inProvider.max, ++inProvider.now);
+        try {
+          await sleep(ms);
+          return await impl(input);
+        } finally {
+          inProvider.now--;
+        }
+      });
+      return inProvider;
+    }
+
+    it('10 POST simultâneos (mesmo pedido e pedidos diferentes) com o MP lento não esgotam o pool (spec-022)', async () => {
+      const inProvider = slowCreateCounting(1500);
+      const v = await variantWithStock('05-camiseta-preta', 7);
+      const orderIds: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        orderIds.push((await placeOrder([{ variantId: v.id, quantity: 1 }])).id);
+      }
+      // 4 POST do mesmo pedido + 1 para cada um dos outros 6 pedidos.
+      const targets = [orderIds[0], orderIds[0], orderIds[0], ...orderIds];
+      expect(targets).toHaveLength(10);
+
+      const posts = Promise.all(targets.map(async (id) => ({ id, res: await createPix(id) })));
+      await sleep(300);
+      const started = Date.now();
+      await http().get('/api/products').set('X-Forwarded-For', nextIp()).expect(200);
+      const catalogMs = Date.now() - started;
+      const results = await posts;
+
+      // Sem o teto, as 10 seguravam as 10 conexões do pool e o catálogo esperava o MP (~1,2 s).
+      expect(catalogMs).toBeLessThan(500);
+      expect(inProvider.max).toBe(PIX_CREATE_CONCURRENCY);
+      expect(createSpy).toHaveBeenCalledTimes(7);
+      for (const id of orderIds) {
+        const mine = results.filter((r) => r.id === id).map((r) => r.res.status);
+        expect(mine.sort()).toEqual(id === orderIds[0] ? [200, 200, 200, 201] : [201]);
+        await paymentOf(id);
+      }
+    }, 20_000);
+
+    it('sem vaga de criação dentro do prazo, 503 PIX_UNAVAILABLE em vez de fila infinita (spec-022)', async () => {
+      slowCreateCounting(PIX_CREATE_WAIT_MS + 500);
+      const v = await variantWithStock('05-camiseta-preta', PIX_CREATE_CONCURRENCY + 1);
+      const orderIds: string[] = [];
+      for (let i = 0; i <= PIX_CREATE_CONCURRENCY; i++) {
+        orderIds.push((await placeOrder([{ variantId: v.id, quantity: 1 }])).id);
+      }
+
+      const results = await Promise.all(orderIds.map((id) => createPix(id)));
+
+      const statuses = results.map((r) => r.status).sort();
+      expect(statuses).toEqual([...Array<number>(PIX_CREATE_CONCURRENCY).fill(201), 503].sort());
+      expect(results.find((r) => r.status === 503)!.body).toMatchObject({
+        code: 'PIX_UNAVAILABLE',
+      });
+      expect(createSpy).toHaveBeenCalledTimes(PIX_CREATE_CONCURRENCY);
+    }, 20_000);
 
     it('quem esperou a trava relê o pedido: pago durante a espera → 409, sem status velho (spec-022)', async () => {
       const v = await variantWithStock('05-camiseta-preta', 3);
