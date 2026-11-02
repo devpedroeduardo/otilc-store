@@ -71,6 +71,16 @@ Se mexeu na API, rode também `npm run test:e2e`. Só conclua com tudo verde.
 - Formatação: Prettier do projeto (aspas simples, vírgula final, 100 colunas).
 - Regex sempre literal (`/^PAID /`). `new RegExp(...)` montado com variável é barrado pelo Semgrep do CI, inclusive em teste.
 
+## Prosa que sai do time
+
+Toda prosa que sai do time passa pela skill `humanizer` (`~/.claude/skills/humanizer/SKILL.md`) antes de sair.
+
+- Vale para docs, README, `specs/*.md`, corpo de PR, comentários de PR no GitHub, corpo da mensagem de commit e comentários de código novos ou alterados com mais de uma frase.
+- Não vale para o assunto do commit, mensagens entre agentes, notas do Maestri, textos da interface e `docs/api/**` quando a spec não permitir mexer no contrato.
+- Quem escreve o texto aplica a skill, antes do commit ou do PR. A revisão não cobra estilo.
+- Fatos, números, `arquivo:linha`, código, comandos, nomes, tabelas e citações ficam como estão. A skill foi escrita para inglês; em português valem os padrões equivalentes, sem traduzir nada.
+- Agente sem acesso à skill lê o `SKILL.md` se puder. Se não puder, entrega o texto ao dev autor (ou à Faísca), que aplica antes de publicar.
+
 ## Segurança (inegociável)
 
 - Nunca leia, crie ou edite `.env` / `.env.local` reais. Use os `.env.example` com valores fictícios.
