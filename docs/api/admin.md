@@ -7,14 +7,14 @@ Schemas e DTOs citados aqui estão em [`packages/shared/src/admin.ts`](../../pac
 
 ### Sessão e cookie
 
-- O login cria uma linha em `admin_sessions` com o **hash SHA-256** (hex) de um token aleatório de 32 bytes. O token puro só existe no cookie.
+- O login cria uma linha em `admin_sessions` com o hash SHA-256 (hex) de um token aleatório de 32 bytes. O token puro só existe no cookie.
 - Cookie `otilc_admin`: `HttpOnly`, `SameSite=Strict`, `Secure` em produção, `Path=/`, `Max-Age=28800` (8 horas). A sessão no banco expira no mesmo instante (`expires_at`).
 - Toda rota, exceto `POST /api/admin/session`, exige sessão válida: cookie presente, hash encontrado, `expires_at` no futuro e usuário `active`. Caso contrário: `401`.
-- O navegador fala com a API pela **origem da loja**: o Next.js reescreve `/api/admin/:path*` para `${API_URL}/api/admin/:path*`. O CORS da API continua fechado.
+- O navegador fala com a API pela origem da loja: o Next.js reescreve `/api/admin/:path*` para `${API_URL}/api/admin/:path*`. O CORS da API continua fechado.
 
 ### CSRF
 
-- `SameSite=Strict` no cookie, **e**
+- `SameSite=Strict` no cookie, e
 - requisições `POST`, `PATCH`, `PUT` e `DELETE` em `/api/admin/**` cujo header `Origin` seja diferente de `WEB_ORIGIN` (ou esteja ausente) recebem `403` antes de qualquer outra verificação, inclusive o login.
 
 ### Papéis
@@ -31,7 +31,7 @@ Cada endpoint exige uma ação (`AdminAction`); `canRole(role, action)` decide. 
 | `order:read`         |  sim  |  sim  |
 | `order:updateStatus` |  sim  |  sim  |
 
-STAFF não edita **nenhum** campo de produto (nem preço, nem nome, nem status) e não cria variação. "Papel mínimo" abaixo: `STAFF` = qualquer admin logado; `OWNER` = só o dono.
+STAFF não edita nenhum campo de produto (nem preço, nem nome, nem status) e não cria variação. "Papel mínimo" abaixo: `STAFF` = qualquer admin logado; `OWNER` = só o dono.
 
 ### Erros
 
@@ -79,8 +79,8 @@ Comuns a todas as rotas autenticadas: `401` sem sessão válida, `403` por papel
 
 ### `POST /api/admin/session` — login
 
-Público, mas sujeito ao CSRF por `Origin`. Limite: **5 tentativas por minuto por IP** (`429`).
-O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, senha errada e usuário inativo devolvem o **mesmo** `401` com a mesma mensagem.
+Público, mas sujeito ao CSRF por `Origin`. Limite: 5 tentativas por minuto por IP (`429`).
+O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, senha errada e usuário inativo devolvem o mesmo `401` com a mesma mensagem.
 
 ```json
 { "email": "dono@example.com", "password": "teste-nao-e-uma-senha-real" }
@@ -150,7 +150,7 @@ Todos os produtos, inclusive `DRAFT`, `RESERVED` e `SOLD_OUT`, do mais novo para
 
 ### `PATCH /api/admin/products/:id` — só OWNER
 
-Qualquer subconjunto **não vazio** dos campos do cadastro, com as mesmas regras (corpo vazio ou só com campos desconhecidos é `400`). Atualiza `updatedAt`.
+Qualquer subconjunto não vazio dos campos do cadastro, com as mesmas regras (corpo vazio ou só com campos desconhecidos é `400`). Atualiza `updatedAt`.
 
 ```json
 { "priceCents": 9990, "featured": true }
@@ -174,7 +174,7 @@ Erros: `404` produto inexistente; `409` SKU já usado ou mesma combinação tama
 
 ### `PUT /api/admin/variants/:id/stock`
 
-Define o **estoque total** (não é incremento).
+Define o estoque total (não é incremento).
 
 ```json
 { "stock": 2 }
