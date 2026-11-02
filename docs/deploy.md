@@ -1,6 +1,6 @@
 # Runbook de deploy
 
-API no **Render**, loja na **Vercel**, banco no **Supabase** (us-east-1). Este documento é o passo a passo do Pedro: tudo o que mexe em painel, conta ou segredo é feito por você, na ordem abaixo. Os agentes só escrevem arquivos de configuração e docs.
+API no Render, loja na Vercel, banco no Supabase (us-east-1). Este documento é o passo a passo do Pedro: tudo o que mexe em painel, conta ou segredo é feito por você, na ordem abaixo. Os agentes só escrevem arquivos de configuração e docs.
 
 > **Nunca cole segredo, URL de conexão ou token neste documento, em commit, em issue ou em chat.** Valores reais só vão direto nos painéis. Os exemplos abaixo são fictícios.
 
@@ -20,7 +20,7 @@ Deploy automático: a API publica sozinha depois que o CI da `main` fica verde (
 - [ ] Conta no Render com plano pago (o Pre-Deploy Command exige) e o GitHub conectado ao repositório `otilc-store`.
 - [ ] Conta na Vercel com o GitHub conectado ao mesmo repositório.
 - [ ] Acesso ao projeto Supabase de produção.
-- [ ] Conta de desenvolvedor no Mercado Pago, com as **credenciais de teste**: `MP_ACCESS_TOKEN` e a assinatura secreta do webhook (`MP_WEBHOOK_SECRET`).
+- [ ] Conta de desenvolvedor no Mercado Pago, com as credenciais de teste: `MP_ACCESS_TOKEN` e a assinatura secreta do webhook (`MP_WEBHOOK_SECRET`).
 - [ ] A PR da spec-016 mergeada na `main` (é ela que traz `render.yaml`, o Dockerfile ajustado e a proteção de configuração).
 
 ## 2. Antes do primeiro deploy: conferir a tabela de controle do drizzle (só leitura)
@@ -36,14 +36,14 @@ O drizzle guarda quais migrações já rodaram em `drizzle.__drizzle_migrations`
    ORDER BY id;
    ```
 
-3. Resultado esperado: **4 linhas**, as migrações `0000` a `0003`, com o `created_at` igual ao `when` de cada entrada de `apps/api/drizzle/meta/_journal.json` e o `hash` igual ao sha256 do SQL correspondente na `main`. As migrações `0004` e `0005` **não** estão na tabela: o Pre-Deploy do primeiro deploy as aplica.
+3. Resultado esperado: 4 linhas, as migrações `0000` a `0003`, com o `created_at` igual ao `when` de cada entrada de `apps/api/drizzle/meta/_journal.json` e o `hash` igual ao sha256 do SQL correspondente na `main`. As migrações `0004` e `0005` não estão na tabela: o Pre-Deploy do primeiro deploy as aplica.
 4. **Se o resultado for outro** (menos de 4 linhas, linhas a mais, `0004`/`0005` já presentes, tabela inexistente): **pare aqui**, não faça o deploy e chame a Bússola. Não tente corrigir a tabela na mão.
 
 ## 3. Pegar a connection string do pooler e o certificado do Supabase
 
 Você vai colar estes dois valores no painel do Render (passo 4). Não os salve em arquivo versionado. Única exceção: o `.crt` baixado do certificado fica em disco só até criar o admin (passo 6, “Criar o primeiro admin em produção”); depois apague o arquivo.
 
-- **`DATABASE_URL`**: Supabase → **Connect** (ou Project Settings → Database) → connection string do **Session pooler** (host `…pooler.supabase.com`, porta `5432`). Preencha a senha do banco no lugar do marcador. O formato é este, com valores fictícios:
+- `DATABASE_URL`: Supabase → **Connect** (ou Project Settings → Database) → connection string do **Session pooler** (host `…pooler.supabase.com`, porta `5432`). Preencha a senha do banco no lugar do marcador. O formato é este, com valores fictícios:
 
   ```
   postgresql://postgres.PROJECT_REF:SENHA_DO_BANCO@aws-0-us-east-1.pooler.supabase.com:5432/postgres
@@ -51,7 +51,7 @@ Você vai colar estes dois valores no painel do Render (passo 4). Não os salve 
 
   Use o session pooler (não a conexão direta nem o transaction pooler): a API usa pool de 10 conexões e o migrator precisa de sessão.
 
-- **`DATABASE_CA_CERT`**: Supabase → Project Settings → Database → **SSL Configuration** → baixe o **certificado raiz (Root CA)**. Abra o arquivo `.crt` em um editor de texto e copie o conteúdo inteiro, de `-----BEGIN CERTIFICATE-----` até `-----END CERTIFICATE-----`. É um certificado público, mas a API só sobe em produção se ele estiver presente, e a conexão com o banco só é aceita se o certificado do servidor bater com ele.
+- `DATABASE_CA_CERT`: Supabase → Project Settings → Database → **SSL Configuration** → baixe o **certificado raiz (Root CA)**. Abra o arquivo `.crt` em um editor de texto e copie o conteúdo inteiro, de `-----BEGIN CERTIFICATE-----` até `-----END CERTIFICATE-----`. É um certificado público, mas a API só sobe em produção se ele estiver presente, e a conexão com o banco só é aceita se o certificado do servidor bater com ele.
 
 ## 4. Aplicar o Blueprint no Render e acompanhar o primeiro deploy
 
@@ -70,7 +70,7 @@ Você vai colar estes dois valores no painel do Render (passo 4). Não os salve 
    `NODE_ENV=production` já vem no `render.yaml`. `PORT`, `ORDER_HOLD_MINUTES` e `PAYMENT_RECONCILIATION_INTERVAL_MS` ficam no padrão. A URL do webhook do Mercado Pago não é variável: ela é configurada no painel do Mercado Pago (passo 6, item 2).
 
 4. Acompanhe o primeiro deploy em **Events/Logs**:
-   - O **Pre-Deploy** roda o migrator e aplica `0004` e `0005` (tabelas de pagamento; valor de enum, tabela de alertas e índice). Deve terminar sem erro.
+   - O Pre-Deploy roda o migrator e aplica `0004` e `0005` (tabelas de pagamento; valor de enum, tabela de alertas e índice). Deve terminar sem erro.
    - Depois a API sobe e o health check `/api/health` passa a responder `200`.
    - Os logs não imprimem valores de variáveis. Se a API recusar subir, a mensagem diz qual variável falta (ex.: `WEB_ORIGIN` https ou `DATABASE_CA_CERT`).
 5. Anote a URL pública do serviço (`https://otilc-api….onrender.com`). Teste no navegador: `<URL do Render>/api/health` deve mostrar `{"status":"ok","database":"ok"}`.
@@ -92,15 +92,15 @@ Você vai colar estes dois valores no painel do Render (passo 4). Não os salve 
 
 ## 6. Fechar o circuito: `WEB_ORIGIN` e webhook do Mercado Pago
 
-1. Render → `otilc-api` → **Environment** → edite `WEB_ORIGIN` para a URL da Vercel, **com https e sem barra final** (ex. fictício: `https://loja.example.com`). Salve: o Render reinicia a API. O CORS e a verificação de `Origin` do admin só aceitam essa origem.
+1. Render → `otilc-api` → **Environment** → edite `WEB_ORIGIN` para a URL da Vercel, com https e sem barra final (ex. fictício: `https://loja.example.com`). Salve: o Render reinicia a API. O CORS e a verificação de `Origin` do admin só aceitam essa origem.
 2. Painel do Mercado Pago → Suas integrações → sua aplicação → **Webhooks → Configurar notificações**: nas abas **modo de teste** e **modo de produção**, configure a URL `<URL do Render>/api/webhooks/mercadopago` e marque o evento **Order (Mercado Pago)** (a loja usa a API de Orders; notificações de Pagamentos são ignoradas). A API de Orders não leva URL de notificação na order: este painel é o único lugar da URL. A assinatura secreta gerada ali é o `MP_WEBHOOK_SECRET` (se mudar, atualize no Render).
-3. As credenciais ficam de **teste** até você decidir o lançamento; nessa hora é só trocar `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` (e o webhook) pelas de produção.
+3. As credenciais ficam de teste até você decidir o lançamento; nessa hora é só trocar `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET` (e o webhook) pelas de produção.
 
 O timer de conciliação de Pix roda dentro da API (a cada 5 minutos por padrão), sem configuração extra.
 
 ### Criar o primeiro admin em produção
 
-Depois do primeiro deploy (e do passo 6, para conseguir entrar no painel), crie o primeiro usuário do painel com o script que já existe (ADR 0002). Ele roda no **seu computador**, na raiz do repositório, e fala direto com o banco do Supabase:
+Depois do primeiro deploy (e do passo 6, para conseguir entrar no painel), crie o primeiro usuário do painel com o script que já existe (ADR 0002). Ele roda no seu computador, na raiz do repositório, e fala direto com o banco do Supabase:
 
 1. Num terminal interativo, exporte as variáveis na sessão do shell, **sem criar arquivo `.env` e sem colar valores em nenhum lugar versionado**. O script carrega a configuração de produção inteira, então precisa de todas estas, com os mesmos valores do painel do Render: `NODE_ENV=production`, `DATABASE_URL` (session pooler), `DATABASE_CA_CERT`, `WEB_ORIGIN`, `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET`. Os valores de uma linha (`DATABASE_URL`, `WEB_ORIGIN`, as `MP_*`) você digita sem eco, por exemplo `read -rs DATABASE_URL && export DATABASE_URL`. O `DATABASE_CA_CERT` é PEM de várias linhas, e o `read` lê só uma: use o `.crt` baixado no passo 3, que preserva as quebras de linha, com `export DATABASE_CA_CERT="$(cat CAMINHO/DO/ARQUIVO.crt)"`. No histórico do shell fica só o caminho, não o certificado. Depois apague o arquivo `.crt` baixado.
 2. Rode `npm run admin:create -w @otilc/api`. O script pergunta os dados pelo terminal e pede a senha sem eco; não aceita argumentos.

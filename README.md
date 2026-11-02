@@ -7,11 +7,11 @@
 ![Drizzle](https://img.shields.io/badge/Drizzle_ORM-C5F74F?style=flat-square&logo=drizzle&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
 
-Loja completa da **OTILC**, marca de roupas streetwear. Monorepo com API em NestJS, loja em Next.js e PostgreSQL.
+Loja completa da OTILC, marca de roupas streetwear. Monorepo com API em NestJS, loja em Next.js e PostgreSQL.
 
-É a segunda etapa do produto. A primeira foi a [vitrine da pré-venda](https://github.com/devpedroeduardo/otilc-landing): um site estático, sem build, que validou a marca e fechava os pedidos pelo WhatsApp. Quando a loja precisou de estoque controlado e pedidos de verdade, veio este projeto, que reaproveita a identidade visual e os dados do Drop 00.
+É a segunda etapa do produto. A primeira foi a [vitrine da pré-venda](https://github.com/devpedroeduardo/otilc-landing): um site estático, sem build, que validou a marca e fechava os pedidos pelo WhatsApp. Este projeto veio quando a loja precisou de estoque controlado e pedidos de verdade, e reaproveita a identidade visual e os dados do Drop 00.
 
-> **Status:** em desenvolvimento. Catálogo, carrinho e criação de pedidos com reserva de estoque já funcionam. Pagamento por Pix e painel administrativo estão no [roadmap](#roadmap).
+> Status: em desenvolvimento. Catálogo, carrinho e criação de pedidos com reserva de estoque já funcionam. Pagamento por Pix e painel administrativo estão no [roadmap](#roadmap).
 
 ## Arquitetura
 
@@ -48,23 +48,23 @@ packages/
 
 ## Destaques técnicos
 
-**Estoque que não vende a mesma peça duas vezes.** Cada peça seminova tem uma unidade só. A reserva é um `UPDATE` condicional (`stock - reserved >= quantidade`) dentro da transação do pedido. O Postgres trava a linha durante o update, então, entre duas compras simultâneas da última unidade, só uma passa e a outra recebe `409`. Um teste de integração dispara **10 pedidos simultâneos** para a mesma peça e confirma que exatamente um é criado.
+Estoque que não vende a mesma peça duas vezes. Cada peça seminova tem uma unidade só. A reserva é um `UPDATE` condicional (`stock - reserved >= quantidade`) dentro da transação do pedido. O Postgres trava a linha durante o update, então, entre duas compras simultâneas da última unidade, só uma passa e a outra recebe `409`. Um teste de integração dispara 10 pedidos simultâneos para a mesma peça e confirma que exatamente um é criado.
 
-**Regras garantidas no banco, não só no código.** Restrições `CHECK` impedem estoque negativo, reserva maior que o estoque, preço zerado e condição fora de 0 a 10. Mesmo um bug na aplicação não consegue gravar esses estados.
+Regras garantidas no banco, não só no código. Restrições `CHECK` impedem estoque negativo, reserva maior que o estoque, preço zerado e condição fora de 0 a 10. Nem um bug na aplicação consegue gravar esses estados.
 
 **O preço nunca vem do navegador.** O checkout envia só a variação e a quantidade. A validação com Zod descarta qualquer campo extra, e a API calcula o total com os preços do banco. O pedido guarda nome, tamanho e preço do momento da compra.
 
-**Reserva com prazo.** O pedido segura o estoque por 30 minutos (configurável). Um job a cada minuto devolve ao estoque as unidades de pedidos não pagos. Ele usa `FOR UPDATE SKIP LOCKED`, então várias instâncias da API podem rodar ao mesmo tempo sem processar o mesmo pedido duas vezes.
+Reserva com prazo. O pedido segura o estoque por 30 minutos (configurável). Um job a cada minuto devolve ao estoque as unidades de pedidos não pagos. Ele usa `FOR UPDATE SKIP LOCKED`, então várias instâncias da API podem rodar ao mesmo tempo sem processar o mesmo pedido duas vezes.
 
-**Pix conferido por três caminhos.** O status do pagamento vem só da API do Mercado Pago, pelo webhook assinado, pela consulta da página do pedido e por uma conciliação a cada 5 minutos que pega o que os dois perderam (inclusive estorno e contestação depois de pago). A conciliação reivindica os pagamentos com `FOR UPDATE SKIP LOCKED` antes de chamar o Mercado Pago, então várias instâncias não consultam o mesmo pagamento, e nenhuma chamada externa acontece com trava aberta. Pix de pedido expirado é cancelado no Mercado Pago. Consulta que falha espera cada vez mais (backoff até 1 h) e, na 8ª falha seguida, a conciliação para e grava um alerta. Os alertas aparecem num painel do admin, que os marca como resolvidos (`UPDATE` condicional, sem resolve duplo) e retoma a conciliação parada.
+Pix conferido por três caminhos. O status do pagamento vem só da API do Mercado Pago, pelo webhook assinado, pela consulta da página do pedido e por uma conciliação a cada 5 minutos que pega o que os dois perderam (inclusive estorno e contestação depois de pago). A conciliação reivindica os pagamentos com `FOR UPDATE SKIP LOCKED` antes de chamar o Mercado Pago, então várias instâncias não consultam o mesmo pagamento, e nenhuma chamada externa acontece com trava aberta. O Pix de um pedido expirado é cancelado no Mercado Pago. Consulta que falha espera cada vez mais (backoff até 1 h) e, na 8ª falha seguida, a conciliação para e grava um alerta. Os alertas aparecem num painel do admin, que os marca como resolvidos (`UPDATE` condicional, sem resolve duplo) e retoma a conciliação parada.
 
-**Transação tudo ou nada.** Se um item do carrinho não tem estoque, nenhum outro é reservado. Os itens são travados sempre na mesma ordem para evitar deadlock.
+Transação tudo ou nada. Se um item do carrinho não tem estoque, nenhum outro é reservado. Os itens são travados sempre na mesma ordem para evitar deadlock.
 
-**Validação compartilhada.** Os mesmos schemas Zod de `packages/shared` validam a entrada na API e mostram os erros no formulário da loja antes do envio.
+Validação compartilhada. Os mesmos schemas Zod de `packages/shared` validam a entrada na API e mostram os erros no formulário da loja antes do envio.
 
-**Segurança da API:** Helmet, CORS restrito à origem da loja, limite de requisições por IP (mais baixo na criação de pedidos), corpo limitado a 20 kB, IDs de pedido em UUID aleatório e variáveis de ambiente validadas na inicialização.
+Segurança da API: Helmet, CORS restrito à origem da loja, limite de requisições por IP (mais baixo na criação de pedidos), corpo limitado a 20 kB, IDs de pedido em UUID aleatório e variáveis de ambiente validadas na inicialização.
 
-**Vitrine com a mesma regra da pré-venda.** Peças reservadas e vendidas continuam visíveis, em cinza e no fim da grade, como prova de que as peças saem.
+Vitrine com a mesma regra da pré-venda. Peças reservadas e vendidas continuam visíveis, em cinza e no fim da grade, como prova de que as peças saem.
 
 ## Stack
 
@@ -131,7 +131,7 @@ O CI roda formatação, tipos, testes unitários, testes de integração com um 
 - [x] Testes E2E do fluxo de compra com Playwright
 - [ ] Deploy: loja na Vercel, API no Render e banco no Supabase ([runbook](docs/deploy.md))
 
-O banco de produção é Supabase (us-east-1), com RLS habilitado em todas as tabelas do `public` e sem policies: a Data API do Supabase (roles `anon` e `authenticated`) não lê nem escreve nada, e a API NestJS, única porta do banco, segue funcionando igual. Detalhes na [spec-010](specs/010-rls-supabase.md).
+O banco de produção é Supabase (us-east-1), com RLS habilitado em todas as tabelas do `public` e sem policies: a Data API do Supabase (roles `anon` e `authenticated`) não lê nem escreve nada, e a API NestJS, única porta do banco, continua funcionando como antes. Detalhes na [spec-010](specs/010-rls-supabase.md).
 
 ## Licença
 

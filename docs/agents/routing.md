@@ -38,17 +38,17 @@ As evidências até a spec-009 vêm da formação anterior (Claude Code, Codex e
 
 Confiança:
 
-- **baixa**: 1 ou 2 specs, ou resultados misturados.
-- **média**: 3 ou mais specs consistentes.
-- **alta**: 5 ou mais specs consistentes em mais de um projeto.
+- baixa: 1 ou 2 specs, ou resultados misturados.
+- média: 3 ou mais specs consistentes.
+- alta: 5 ou mais specs consistentes em mais de um projeto.
 
 ## Regras fixas
 
-1. **O revisor nunca é o autor, e de preferência é de outro fornecedor.** Mesmo modelo revisando a si mesmo repete os mesmos pontos cegos. Forja e Faísca são do mesmo fornecedor (Opus 5.5), por isso desde 2026-10-28 a Lente (Codex) revisa todo PR. Em segurança, banco e pagamento há segunda revisão pelo outro dev, também com `roles/revisor.md` em modo só leitura, começando por 3 formas de o PR quebrar em produção, e o Pedro lê o diff inteiro.
-2. **O CI é a rede de segurança**, não o revisor. O Semgrep pegou na 006 o que a revisão do agente deixou passar. Nenhum PR entra sem todos os checks verdes (testes, Semgrep, gitleaks).
-3. **O revisor roda sem poder de escrita:** `claude --permission-mode plan` ou `codex --sandbox read-only`.
-4. **O revisor recebe a descrição do PR** salva em arquivo (`gh pr view NN > /tmp/pr-NN.md`), porque no modo só leitura ele não chama o `gh`.
-5. **Merge é sempre humano** (Pedro), depois de ler o diff inteiro.
+1. O revisor nunca é o autor, e de preferência é de outro fornecedor. Mesmo modelo revisando a si mesmo repete os mesmos pontos cegos. Forja e Faísca são do mesmo fornecedor (Opus 5.5), por isso desde 2026-10-28 a Lente (Codex) revisa todo PR. Em segurança, banco e pagamento há segunda revisão pelo outro dev, também com `roles/revisor.md` em modo só leitura, começando por 3 formas de o PR quebrar em produção, e o Pedro lê o diff inteiro.
+2. O CI é a rede de segurança, não o revisor. O Semgrep pegou na 006 o que a revisão do agente deixou passar. Nenhum PR entra sem todos os checks verdes (testes, Semgrep, gitleaks).
+3. O revisor roda sem poder de escrita: `claude --permission-mode plan` ou `codex --sandbox read-only`.
+4. O revisor recebe a descrição do PR salva em arquivo (`gh pr view NN > /tmp/pr-NN.md`), porque no modo só leitura ele não chama o `gh`.
+5. Merge é sempre humano (Pedro), depois de ler o diff inteiro.
 
 ## Como atualizar esta tabela
 

@@ -114,4 +114,4 @@ Notas no fichário "Fluxo OTILC" (a Bússola é a dona):
 
 ## Reaproveitando em outros projetos
 
-Copie `AGENTS.md`, `CLAUDE.md`, `specs/_TEMPLATE.md`, `docs/agents/`, `scripts/new-task.sh` e `.github/`. Reescreva no `AGENTS.md` as seções "O projeto", "Stack", "Comandos" e "Convenções" **olhando o código real** — regra genérica que não bate com o repositório faz o agente trocar a sua stack.
+Copie `AGENTS.md`, `CLAUDE.md`, `specs/_TEMPLATE.md`, `docs/agents/`, `scripts/new-task.sh` e `.github/`. Reescreva no `AGENTS.md` as seções "O projeto", "Stack", "Comandos" e "Convenções" olhando o código real: regra genérica que não bate com o repositório faz o agente trocar a sua stack.
