@@ -25,7 +25,7 @@ O passo 2 (plano + "ok") custa 1 minuto e evita o maior desperdício de tokens: 
 
 ## Prompt de revisão cruzada
 
-Use um agente de **outro fornecedor** que não o autor (ver `routing.md`), na worktree da spec, **sem poder de escrita**.
+Use um agente de outro fornecedor que não o autor (ver `routing.md`), na worktree da spec, sem poder de escrita.
 
 Antes, no shell da worktree:
 
@@ -52,7 +52,7 @@ Lições:
 
 - Spec-001: um revisor que só confere a spec acha pouco. O papel `revisor` obriga a segunda pergunta ("o design tem buracos?").
 - Spec-006: sem a descrição do PR, o revisor não confere o critério "PR lista as divergências". Daí o `/tmp/pr-NN.md`.
-- Triagem do humano: **bloqueador** volta ao autor; **sugestão** vira spec futura ou é descartada com motivo.
+- Triagem do humano: **bloqueador** volta ao autor; sugestão vira spec futura ou é descartada com motivo.
 
 ## Prompt de correção após revisão
 

@@ -1,6 +1,6 @@
 # Papéis
 
-Um papel diz **o que** o agente cuida e **como** ele deve pensar. Ele não fala de stack: a stack fica no `AGENTS.md` de cada projeto. Por isso os mesmos papéis servem para qualquer projeto e para qualquer agente (Claude Code, Codex, OpenCode...).
+Um papel diz o que o agente cuida e como ele deve pensar. Ele não fala de stack: a stack fica no `AGENTS.md` de cada projeto. Por isso os mesmos papéis servem para qualquer projeto e para qualquer agente (Claude Code, Codex, OpenCode...).
 
 | Papel                     | Quando usar                                                            |
 | ------------------------- | ---------------------------------------------------------------------- |
