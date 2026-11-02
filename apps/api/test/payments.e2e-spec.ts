@@ -340,22 +340,21 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
     const within = <T>(promise: Promise<T>, ms: number) =>
       Promise.race([promise, sleep(ms).then(() => 'timeout' as const)]);
 
-    it('10 POST simultâneos (mesmo pedido e pedidos diferentes) com o MP lento não esgotam o pool (spec-022)', async () => {
+    it('10 criações simultâneas (pedidos distintos) com o MP lento não esgotam o pool (spec-022)', async () => {
       const provider = gatedCreate();
-      const v = await variantWithStock('05-camiseta-preta', 7);
+      const v = await variantWithStock('05-camiseta-preta', 10);
       const orderIds: string[] = [];
-      for (let i = 0; i < 7; i++) {
+      for (let i = 0; i < 10; i++) {
         orderIds.push((await placeOrder([{ variantId: v.id, quantity: 1 }])).id);
       }
-      // 4 POST do mesmo pedido + 1 para cada um dos outros 6 pedidos.
-      const targets = [orderIds[0], orderIds[0], orderIds[0], ...orderIds];
-      expect(targets).toHaveLength(10);
 
-      const posts = Promise.all(targets.map(async (id) => ({ id, res: await createPix(id) })));
+      // 10 pedidos distintos: o single-flight não junta nada (o mesmo pedido tem teste próprio).
+      const posts = Promise.all(orderIds.map((id) => createPix(id)));
       let catalog;
+      let inProviderAtCatalog;
       try {
         // Com o teto de vagas cheio e o MP segurando as 4 criações, o catálogo ainda acha conexão.
-        // Sem o teto, as 10 seguram as 10 conexões do pool e o GET só voltaria depois do MP.
+        // Sem o teto, as 10 criações seguram as 10 conexões do pool e o GET fica preso até o MP.
         await provider.reached(PIX_CREATE_CONCURRENCY);
         catalog = await within(
           http()
@@ -364,7 +363,7 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
             .then((r) => r),
           5_000,
         );
-        expect(provider.inProvider.now).toBe(PIX_CREATE_CONCURRENCY);
+        inProviderAtCatalog = provider.inProvider.now;
       } finally {
         provider.open();
       }
@@ -372,13 +371,11 @@ describe('Pix com Mercado Pago (integração com Postgres, provedor simulado)', 
 
       expect(catalog).not.toBe('timeout');
       expect(catalog).toMatchObject({ status: 200 });
+      expect(inProviderAtCatalog).toBe(PIX_CREATE_CONCURRENCY);
       expect(provider.inProvider.max).toBe(PIX_CREATE_CONCURRENCY);
-      expect(createSpy).toHaveBeenCalledTimes(7);
-      for (const id of orderIds) {
-        const mine = results.filter((r) => r.id === id).map((r) => r.res.status);
-        expect(mine.sort()).toEqual(id === orderIds[0] ? [200, 200, 200, 201] : [201]);
-        await paymentOf(id);
-      }
+      expect(createSpy).toHaveBeenCalledTimes(10);
+      expect(results.map((r) => r.status)).toEqual(Array<number>(10).fill(201));
+      for (const id of orderIds) await paymentOf(id);
     }, 20_000);
 
     it('sem vaga de criação dentro do prazo, 503 PIX_UNAVAILABLE em vez de fila infinita (spec-022)', async () => {
