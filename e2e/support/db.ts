@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createDatabase } from '../../apps/api/src/db/client';
 import {
   orderItems,
@@ -89,19 +89,20 @@ export function alertResolved(orderId: string): Promise<boolean> {
 }
 
 /**
- * Cancela o pedido criado pelo teste e devolve a reserva à variação. Só mexe no pedido do
- * `orderId` e só se ainda estiver aguardando pagamento, então rodar de novo (ou depois de o
- * teste já ter cancelado) não devolve a unidade duas vezes.
+ * Desfaz o efeito do pedido criado pelo teste sobre o estoque e o deixa CANCELED. Aguardando
+ * pagamento: devolve a reserva. Pago: devolve a unidade vendida ao estoque. Só mexe no pedido do
+ * `orderId`, e só uma vez: um pedido já cancelado (ou o teste ter cancelado antes) não muda nada.
  */
 export function releaseOrder(orderId: string): Promise<void> {
   return withDb((db) =>
     db.transaction(async (tx) => {
-      const canceled = await tx
-        .update(orders)
-        .set({ status: 'CANCELED' })
-        .where(and(eq(orders.id, orderId), eq(orders.status, 'PENDING_PAYMENT')))
-        .returning({ id: orders.id });
-      if (canceled.length === 0) return;
+      const [order] = await tx
+        .select({ status: orders.status })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .for('update');
+      if (order?.status !== 'PENDING_PAYMENT' && order?.status !== 'PAID') return;
+      await tx.update(orders).set({ status: 'CANCELED' }).where(eq(orders.id, orderId));
       const items = await tx
         .select({ variantId: orderItems.variantId, quantity: orderItems.quantity })
         .from(orderItems)
@@ -109,7 +110,11 @@ export function releaseOrder(orderId: string): Promise<void> {
       for (const item of items) {
         await tx
           .update(variants)
-          .set({ reserved: sql`${variants.reserved} - ${item.quantity}` })
+          .set(
+            order.status === 'PAID'
+              ? { stock: sql`${variants.stock} + ${item.quantity}` }
+              : { reserved: sql`${variants.reserved} - ${item.quantity}` },
+          )
           .where(eq(variants.id, item.variantId));
       }
     }),

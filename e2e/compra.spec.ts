@@ -4,11 +4,24 @@ import { orderStatus, releaseOrder, variantOf } from './support/db';
 const SLUG = '05-camiseta-preta';
 
 // Pedido feito pela tela, cancelado no afterEach (roda mesmo se o teste falhar depois do checkout)
-// para a camiseta não ficar reservada até o fim da execução.
+// para a camiseta não ficar reservada até o fim da execução. A loja guarda a página do produto
+// por 30 s (revalidate em apps/web/src/lib/api.ts), então o hook espera ela mostrar a peça à
+// venda de novo: sem isso, a próxima execução (--repeat-each) abriria a página ainda reservada.
 const createdOrders: string[] = [];
 
-test.afterEach(async () => {
-  for (const id of createdOrders.splice(0)) await releaseOrder(id);
+// O teste já passa dos 30 s esperando o cache; o hook precisa de folga além disso.
+test.setTimeout(120_000);
+
+test.afterEach(async ({ page }) => {
+  const ids = createdOrders.splice(0);
+  for (const id of ids) await releaseOrder(id);
+  if (ids.length === 0) return;
+  await expect(async () => {
+    await page.goto(`/produto/${SLUG}`);
+    await expect(page.getByRole('button', { name: 'Adicionar ao carrinho' })).toBeVisible({
+      timeout: 1_000,
+    });
+  }).toPass({ timeout: 45_000 });
 });
 
 test('compra: catálogo → categoria → produto → carrinho → pedido com estoque reservado', async ({
