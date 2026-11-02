@@ -83,7 +83,7 @@ Você vai colar estes dois valores no painel do Render (passo 4). Não os salve 
    - **Framework Preset**: Next.js (detectado sozinho).
    - **Production Branch**: `main`, com deploy automático.
    - **Functions Region**: `iad1` (Washington, D.C.), em Settings → Functions.
-   - Previews desligados: em Settings → Git, desative os deploys de branches/PRs (previews). Um preview apontaria para a API de produção e criaria pedidos reais.
+   - **Previews desligados**: em Settings → Git, desative os deploys de branches/PRs (previews). Um preview apontaria para a API de produção e criaria pedidos reais.
 3. **Environment Variables** (ambiente Production):
    - `API_URL` = URL pública do Render (passo 4), sem barra no final.
    - `NEXT_PUBLIC_API_URL` = a mesma URL do Render.

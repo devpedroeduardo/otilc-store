@@ -5,7 +5,7 @@ Schemas e DTOs citados aqui estão em [`packages/shared/src/payments.ts`](../../
 
 ## Regras gerais
 
-- O valor nunca vem do navegador. A cobrança usa sempre `orders.totalCents`, lido do banco. Nenhum endpoint aceita valor no corpo.
+- **O valor nunca vem do navegador.** A cobrança usa sempre `orders.totalCents`, lido do banco. Nenhum endpoint aceita valor no corpo.
 - A loja usa só a API de Orders do Mercado Pago (`/v1/orders`, spec-021): cada cobrança Pix é uma order com uma transação Pix. `payments.provider_payment_id` guarda o id da order (`ORD` seguido de 26 a 40 letras maiúsculas e dígitos, `mercadoPagoOrderIdSchema`); o id da transação (`PAY…`) não é guardado. Id fora desse formato nunca chega ao Mercado Pago.
 - O status do pagamento vem só da API do Mercado Pago (`GET /v1/orders/{id}`). A notificação do webhook é só um aviso para ir conferir; o status escrito no corpo dela é ignorado.
 - Uma transição só. Webhook, verificação sob demanda, conciliação periódica e cancelamento do Pix expirado usam a mesma função para mudar o pedido. A mudança `PENDING_PAYMENT → PAID` é condicional e acontece uma vez, com o mesmo efeito no estoque do painel (`reserved -= qtd` e `stock -= qtd`, ver [admin.md](admin.md)).

@@ -52,7 +52,7 @@ Estoque que não vende a mesma peça duas vezes. Cada peça seminova tem uma uni
 
 Regras garantidas no banco, não só no código. Restrições `CHECK` impedem estoque negativo, reserva maior que o estoque, preço zerado e condição fora de 0 a 10. Nem um bug na aplicação consegue gravar esses estados.
 
-O preço nunca vem do navegador. O checkout envia só a variação e a quantidade. A validação com Zod descarta qualquer campo extra, e a API calcula o total com os preços do banco. O pedido guarda nome, tamanho e preço do momento da compra.
+**O preço nunca vem do navegador.** O checkout envia só a variação e a quantidade. A validação com Zod descarta qualquer campo extra, e a API calcula o total com os preços do banco. O pedido guarda nome, tamanho e preço do momento da compra.
 
 Reserva com prazo. O pedido segura o estoque por 30 minutos (configurável). Um job a cada minuto devolve ao estoque as unidades de pedidos não pagos. Ele usa `FOR UPDATE SKIP LOCKED`, então várias instâncias da API podem rodar ao mesmo tempo sem processar o mesmo pedido duas vezes.
 
