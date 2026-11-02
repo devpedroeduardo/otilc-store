@@ -1,7 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { orderStatus, variantOf } from './support/db';
+import { orderStatus, releaseOrder, variantOf } from './support/db';
 
 const SLUG = '05-camiseta-preta';
+
+// Pedido feito pela tela, cancelado no afterEach (roda mesmo se o teste falhar depois do checkout)
+// para a camiseta não ficar reservada até o fim da execução.
+const createdOrders: string[] = [];
+
+test.afterEach(async () => {
+  for (const id of createdOrders.splice(0)) await releaseOrder(id);
+});
 
 test('compra: catálogo → categoria → produto → carrinho → pedido com estoque reservado', async ({
   page,
@@ -37,6 +45,7 @@ test('compra: catálogo → categoria → produto → carrinho → pedido com es
   const response = await created;
   expect(response.status()).toBe(201);
   const order = (await response.json()) as { id: string; number: number };
+  createdOrders.push(order.id);
 
   // Depois do checkout a loja leva o cliente à página do pedido. Sem credenciais do Mercado
   // Pago no ambiente de E2E, o Pix fica desligado e a página avisa.

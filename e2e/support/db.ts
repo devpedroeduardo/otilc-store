@@ -1,6 +1,13 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { createDatabase } from '../../apps/api/src/db/client';
-import { orders, paymentAlerts, payments, products, variants } from '../../apps/api/src/db/schema';
+import {
+  orderItems,
+  orders,
+  paymentAlerts,
+  payments,
+  products,
+  variants,
+} from '../../apps/api/src/db/schema';
 import { assertE2EDatabaseUrl, E2E_DATABASE_URL } from './env';
 
 /** Leitura direta do banco de teste para conferir o efeito das ações feitas pela tela. */
@@ -79,4 +86,32 @@ export function alertResolved(orderId: string): Promise<boolean> {
       .where(eq(payments.orderId, orderId));
     return row?.resolvedAt != null;
   });
+}
+
+/**
+ * Cancela o pedido criado pelo teste e devolve a reserva à variação. Só mexe no pedido do
+ * `orderId` e só se ainda estiver aguardando pagamento, então rodar de novo (ou depois de o
+ * teste já ter cancelado) não devolve a unidade duas vezes.
+ */
+export function releaseOrder(orderId: string): Promise<void> {
+  return withDb((db) =>
+    db.transaction(async (tx) => {
+      const canceled = await tx
+        .update(orders)
+        .set({ status: 'CANCELED' })
+        .where(and(eq(orders.id, orderId), eq(orders.status, 'PENDING_PAYMENT')))
+        .returning({ id: orders.id });
+      if (canceled.length === 0) return;
+      const items = await tx
+        .select({ variantId: orderItems.variantId, quantity: orderItems.quantity })
+        .from(orderItems)
+        .where(eq(orderItems.orderId, orderId));
+      for (const item of items) {
+        await tx
+          .update(variants)
+          .set({ reserved: sql`${variants.reserved} - ${item.quantity}` })
+          .where(eq(variants.id, item.variantId));
+      }
+    }),
+  );
 }

@@ -1,12 +1,21 @@
 import { expect, test } from '@playwright/test';
-import { alertResolved, seedAlert } from './support/db';
+import { alertResolved, releaseOrder, seedAlert } from './support/db';
 import { createOrder, loginAs } from './support/flows';
+
+// Pedidos do teste, cancelados no afterEach (roda mesmo se o teste falhar no meio) para a unidade
+// do casaco não ficar reservada e mudar a ordem da grade nos outros arquivos.
+const createdOrders: string[] = [];
+
+test.afterEach(async () => {
+  for (const id of createdOrders.splice(0)) await releaseOrder(id);
+});
 
 test('admin vê o alerta com tipo, pedido e orientação e o marca como resolvido', async ({
   page,
   request,
 }) => {
   const order = await createOrder(request, '12-casaco');
+  createdOrders.push(order.id);
   await seedAlert(order.id, 'DUPLICATE_PAYMENT', 25980);
 
   await loginAs(page, 'OWNER');
