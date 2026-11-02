@@ -30,4 +30,5 @@ Copie a lista da spec e marque o que foi atendido:
 - [ ] CI e Segurança verdes
 - [ ] Só arquivos permitidos pela spec foram alterados
 - [ ] Li o diff inteiro, não só o resumo do agente
+- [ ] Prosa do PR, commits e docs passou pelo humanizer
 - [ ] Se mexeu em pedidos/estoque/auth: rodei `npm run test:e2e` localmente
