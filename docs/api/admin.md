@@ -79,8 +79,8 @@ Comuns a todas as rotas autenticadas: `401` sem sessão válida, `403` por papel
 
 ### `POST /api/admin/session` — login
 
-Público, mas sujeito ao CSRF por `Origin`. Limite: 5 tentativas por minuto por IP (`429`).
-O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, senha errada e usuário inativo devolvem o mesmo `401` com a mesma mensagem.
+Público, mas sujeito ao CSRF por `Origin`. Limite: **5 tentativas por minuto por IP** (`429`).
+O e-mail é normalizado pelo schema (`trim` + minúsculas). E-mail inexistente, senha errada e usuário inativo devolvem o **mesmo** `401` com a mesma mensagem.
 
 ```json
 { "email": "dono@example.com", "password": "teste-nao-e-uma-senha-real" }
