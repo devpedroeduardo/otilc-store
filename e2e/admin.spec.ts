@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { orderStatus, variantOf } from './support/db';
+import { orderStatus, releaseOrder, variantOf } from './support/db';
 import { WEB_URL } from './support/env';
 import { createOrder, loginAs } from './support/flows';
 
@@ -96,9 +96,18 @@ test('cancelar pedido no painel devolve a unidade para a loja', async ({ page, r
   }).toPass({ timeout: 45_000 });
 });
 
+// O teste da peça vendida deixa o short sem estoque; o afterEach devolve a unidade (roda mesmo se
+// o teste falhar) para a execução seguinte, ou o --repeat-each, partir do estado do seed.
+const soldOrders: string[] = [];
+
+test.afterEach(async () => {
+  for (const id of soldOrders.splice(0)) await releaseOrder(id);
+});
+
 test('peça vendida aparece em cinza no fim da grade', async ({ page, request }) => {
   const slug = '11-short';
   const order = await createOrder(request, slug);
+  soldOrders.push(order.id);
 
   await loginAs(page, 'OWNER');
   await openOrder(page, order.number);
