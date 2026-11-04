@@ -1,6 +1,7 @@
-# Ambiente local completo: banco, API e loja.
-#   docker compose up -d db     -> só o Postgres (para rodar API e loja com npm run dev)
-#   docker compose up --build   -> tudo em contêineres
+# Ambiente local completo: banco, migração, API e loja. Só valores locais e fictícios.
+#   docker compose up -d db       -> só o Postgres (para rodar API e loja com npm run dev)
+#   docker compose up --build     -> tudo em contêineres, com o Pix desligado
+#   docker compose run --rm seed  -> carrega o Drop 00 e APAGA os dados do banco, inclusive pedidos
 services:
   db:
     image: postgres:16-alpine
@@ -17,19 +18,70 @@ services:
       interval: 5s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    # O Dockerfile fixa NODE_ENV=production, que exige o CA do Supabase e as credenciais do Pix.
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://otilc:otilc@db:5432/otilc
+    command: ['node', '/repo/apps/api/dist/db/migrate.js']
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # O build da API não compila o seed e o prune tira o tsx, então ele tem imagem própria e fica fora
+  # da imagem de produção.
+  seed:
+    profiles: ['seed']
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM node:22-alpine
+        WORKDIR /repo
+        COPY package.json package-lock.json turbo.json tsconfig.base.json ./
+        COPY packages/shared/package.json packages/shared/
+        COPY apps/api/package.json apps/api/
+        RUN npm ci --workspace @otilc/api --workspace @otilc/shared --include-workspace-root
+        COPY packages/shared packages/shared
+        COPY apps/api apps/api
+        RUN npm run build -w @otilc/shared
+        WORKDIR /repo/apps/api
+        USER node
+        CMD ["/repo/node_modules/.bin/tsx", "src/db/seed.ts"]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://otilc:otilc@db:5432/otilc
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   api:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     environment:
+      NODE_ENV: development
       DATABASE_URL: postgres://otilc:otilc@db:5432/otilc
       WEB_ORIGIN: http://localhost:3000
       PORT: 3333
     ports:
       - '3333:3333'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3333/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   web:
     build:
@@ -42,7 +94,8 @@ services:
     ports:
       - '3000:3000'
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
 volumes:
   pgdata:

@@ -91,7 +91,16 @@ npm run db:seed                         # carrega as 17 peças do Drop 00
 npm run dev                             # API em :3333 e loja em :3000
 ```
 
-Para subir tudo em contêineres: `docker compose up --build`.
+Para subir tudo em contêineres, só com o Docker:
+
+```bash
+docker compose up --build               # banco, migração, API em :3333 e loja em :3000
+docker compose run --rm seed            # opcional: carrega as 17 peças do Drop 00
+```
+
+O `up` cria as tabelas e não mexe nos dados, mesmo repetido, então a loja começa vazia até você rodar o seed. O seed **apaga todos os dados do banco**, inclusive pedidos, antes de carregar as peças. Se alterou o código ou os dados do seed, rode com `--build`.
+
+Nesse modo o Pix fica desligado, como no `npm run dev` sem credenciais. O painel administrativo não funciona: a loja encaminha `/api/admin` para o endereço gravado no build (`localhost:3333`), que dentro do contêiner não é a API. Não rode junto com `npm run dev`, porque os dois usam as mesmas portas.
 
 Para testar o Pix de ponta a ponta na sua máquina (Mercado Pago sandbox e webhook por túnel), siga o roteiro em [docs/homologacao-local.md](docs/homologacao-local.md).
 
