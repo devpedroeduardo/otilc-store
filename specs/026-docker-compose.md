@@ -23,7 +23,7 @@ A partir de um clone limpo e dos `.env.example`, `docker compose up --build` sob
 
 1. Serviço `api`: `NODE_ENV: development` no compose. Pix fica desligado, como no `npm run dev`.
 2. Serviço `migrate`: mesma imagem da `api`, roda o `migrate.js` compilado, `restart: "no"`. A `api` depende dele com `condition: service_completed_successfully`, e ele depende do `db` healthy.
-3. Serviço `seed` atrás de `profiles: ["seed"]`, rodado só com `docker compose run --rm seed`. O `up` nunca semeia.
+3. Serviço `seed` atrás de `profiles: ["seed"]`, rodado só com `docker compose run --rm seed`. O `up` nunca semeia. A imagem de produção não tem o seed compilado (`apps/api/tsconfig.build.json` o exclui) e o prune tira o `tsx`, então o serviço usa `dockerfile_inline` no próprio compose: `node:22-alpine`, `npm ci` do lockfile, build do shared e `tsx src/db/seed.ts`. O seed continua fora da imagem de produção.
 4. Healthcheck na `api` em `/api/health`, de preferência com `node -e fetch`, sem pacote novo na imagem. A `web` depende da `api` com `condition: service_healthy`.
 5. Variáveis inline no compose, só com os valores fictícios e locais que já existem nos `.env.example`, sem `env_file`. Se faltar variável nos exemplos, atualize o exemplo.
 6. Portas fixas 5432, 3333 e 3000, e o volume `pgdata` sem mudança. Nada de `container_name` fixo, para `-p otilc-smoke` não colidir com o projeto `otilc-store`.
@@ -38,7 +38,7 @@ A partir de um clone limpo e dos `.env.example`, `docker compose up --build` sob
 - `specs/026-docker-compose.md`
 - `docs/agents/scorecard.md` (só a linha 025)
 
-Se o `migrate.js`, o seed compilado ou os SQL de migração não estiverem na imagem final, ou se o build da `web` precisar da API no ar, a Forja para e avisa a Bússola. Mexer no Dockerfile está fora desta spec.
+Se o `migrate.js` ou os SQL de migração não estiverem na imagem final, ou se o build da `web` precisar da API no ar, a Forja para e avisa a Bússola. O mesmo vale se o `assertLocalDatabaseUrl` do seed recusar o host `db` do compose. Mexer no Dockerfile, no `tsconfig.build.json` ou em `src` está fora desta spec.
 
 ## Fora do escopo
 
