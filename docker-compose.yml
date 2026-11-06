@@ -89,6 +89,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: http://localhost:3333
+        API_URL: http://api:3333
     environment:
       API_URL: http://api:3333
     ports:
