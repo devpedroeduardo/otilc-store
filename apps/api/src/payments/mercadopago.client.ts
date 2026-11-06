@@ -96,9 +96,11 @@ export function isOrderId(id: string): boolean {
 }
 
 /**
- * Mapeia o status da order (e o detalhe) para o status da cobrança. Desconhecido → `null`: não
- * muda nada (só log). `charged_back` também é `null`: numa cobrança aprovada ele só gera alerta
- * (`isReversal`), e numa pendente não paga o pedido.
+ * Mapeia o status da order (e o detalhe) para o status da cobrança. Sem classificação → `null`: o
+ * status da cobrança não muda (a transição decide o que fazer). `charged_back` também é `null`:
+ * numa cobrança aprovada ele só gera alerta (`isReversal`), e numa pendente não paga o pedido.
+ * `failed` é terminal e sem dinheiro, então qualquer detalhe encerra a cobrança (spec-028);
+ * `processed` com outro detalhe continua `null`, porque ali pode haver dinheiro recebido.
  */
 export function toChargeStatus(
   status: string,
@@ -118,9 +120,7 @@ export function toChargeStatus(
     case 'canceled':
       return 'CANCELLED';
     case 'failed':
-      if (statusDetail === 'expired') return 'CANCELLED';
-      if (statusDetail === 'failed') return 'REJECTED';
-      return null;
+      return statusDetail === 'expired' ? 'CANCELLED' : 'REJECTED';
     default:
       return null;
   }
