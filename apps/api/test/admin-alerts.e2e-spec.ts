@@ -2,7 +2,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
-import type { AdminAlertDto, AdminRole, PaymentAlertType } from '@otilc/shared';
+import {
+  alertGuide,
+  type AdminAlertDto,
+  type AdminRole,
+  type PaymentAlertType,
+} from '@otilc/shared';
 import { AdminAuthService } from '../src/admin-auth/admin-auth.service';
 import { createAdminUser } from '../src/admin-auth/new-admin';
 import { SESSION_COOKIE } from '../src/admin-auth/session-token';
@@ -362,6 +367,43 @@ describe('Admin: painel de alertas de pagamento (integração com Postgres)', ()
   });
 
   describe('retomar conciliação', () => {
+    it('parada por resposta sem classificação (spec-028): retomar volta a consultar e a contagem recomeça do zero', async () => {
+      const v = await variantWithStock(3);
+      const { orderId, payment, providerPaymentId } = await orderWithPix(v.id);
+      mp.remote.set(providerPaymentId, {
+        ...mp.remote.get(providerPaymentId)!,
+        status: 'processed',
+        statusDetail: 'em_revisao',
+      });
+      await failUntilStopped(payment.id);
+      const [{ id: alertId }] = await ctx.db
+        .select({ id: paymentAlerts.id })
+        .from(paymentAlerts)
+        .where(eq(paymentAlerts.paymentId, payment.id));
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+      mp.getSpy.mockClear();
+
+      await post(alertId, 'resume-reconciliation').expect(200);
+
+      expect(mp.getSpy).not.toHaveBeenCalled();
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'PENDING',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+      expect(mp.getSpy).toHaveBeenCalledTimes(1);
+      expect((await paymentOf(orderId)).checkFailures).toBe(1);
+    });
+
+    it('a orientação do alerta não diz que o Mercado Pago falhou (spec-028)', () => {
+      expect(alertGuide('RECONCILIATION_STOPPED')).toEqual({
+        title: 'Conciliação parou',
+        action:
+          'A conciliação parou depois de 8 consultas seguidas sem resultado; confira o pagamento no painel do MP e use "Retomar conciliação".',
+      });
+    });
+
     it('zera check_failures e next_check_at, sem consultar o MP; o alerta segue aberto e a conciliação volta a selecionar', async () => {
       const { alertId, orderId, payment } = await stoppedPayment();
       expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });

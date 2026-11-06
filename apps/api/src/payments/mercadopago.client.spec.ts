@@ -449,7 +449,8 @@ describe('toChargeStatus e isReversal', () => {
     ['canceled', 'expired', 'CANCELLED', false],
     ['failed', 'expired', 'CANCELLED', false],
     ['failed', 'failed', 'REJECTED', false],
-    ['failed', null, null, false],
+    ['failed', null, 'REJECTED', false],
+    ['failed', 'em_revisao', 'REJECTED', false],
     // A API de Pagamentos escrevia `cancelled` (dois L) e `approved`: aqui são desconhecidos.
     ['cancelled', 'cancelled', null, false],
     ['approved', 'accredited', null, false],

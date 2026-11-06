@@ -733,6 +733,296 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       await backoffElapsed(orderId);
       expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
     });
+
+    describe('order sem classificação em cobrança PENDING (spec-028)', () => {
+      const unclassified = [
+        ['processed/<desconhecido>', { status: 'processed', statusDetail: 'em_revisao' }],
+        ['processed/null', { status: 'processed', statusDetail: null }],
+        ['charged_back/in_process', mpStatus.chargedBack],
+        ['cancelled/cancelled', { status: 'cancelled', statusDetail: 'cancelled' }],
+      ] as const;
+
+      it.each(unclassified)(
+        '%s: soma a cada rodada, respeita next_check_at, para na 8ª e não é mais selecionada',
+        async (_label, remoteStatus) => {
+          const v = await variantWithStock('05-camiseta-preta', 2);
+          const { orderId, paymentId } = await orderWithPix(v.id);
+          setRemote(paymentId, remoteStatus);
+
+          for (let n = 1; n < RECONCILIATION_MAX_FAILURES; n++) {
+            await failUntil(orderId, n);
+            expect(mp.getSpy).toHaveBeenCalledTimes(n);
+            expectNextCheckIn(await paymentOf(orderId), reconciliationDelayMs(n, intervalMs));
+            // Fora dos 20 s e sem o backoff vencido: continua de fora.
+            await checkedAgo(orderId, 60);
+            expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+            expect(mp.getSpy).toHaveBeenCalledTimes(n);
+          }
+          expect(await alertsOf(orderId)).toEqual([]);
+          expect(stoppedLogs(paymentId)).toEqual([]);
+
+          await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+          expect(await paymentOf(orderId)).toMatchObject({
+            status: 'PENDING',
+            checkFailures: RECONCILIATION_MAX_FAILURES,
+            nextCheckAt: null,
+            alert: 'RECONCILIATION_STOPPED',
+          });
+          expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+          expect(stoppedLogs(paymentId)).toHaveLength(1);
+          // Nunca paga nem encerra por conta própria: ali pode haver dinheiro recebido.
+          expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+          expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+          // O alerta não guarda motivo: o status e o detalhe vão para o log a cada consulta.
+          const seen = `"${remoteStatus.status}/${remoteStatus.statusDetail ?? ''}"`;
+          expect(
+            warnings().filter((w) => w.includes(seen) && w.includes(paymentId)).length,
+          ).toBeGreaterThanOrEqual(RECONCILIATION_MAX_FAILURES);
+
+          await backoffElapsed(orderId);
+          await checkedAgo(orderId, null);
+          expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+          expect(mp.getSpy).toHaveBeenCalledTimes(RECONCILIATION_MAX_FAILURES);
+        },
+      );
+
+      it('falha real e resposta sem classificação somam no mesmo contador, em sequência', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const remote = mp.remote.get(paymentId)!;
+
+        goneFromMp(paymentId);
+        await failUntil(orderId, 1);
+        mp.remote.set(paymentId, { ...remote, status: 'processed', statusDetail: null });
+        await failUntil(orderId, 2);
+        goneFromMp(paymentId);
+        await failUntil(orderId, 3);
+
+        expectNextCheckIn(await paymentOf(orderId), reconciliationDelayMs(3, intervalMs));
+      });
+
+      it.each(unclassified)(
+        'webhook com %s não soma nem zera, nem no meio do backoff nem no teto',
+        async (_label, remoteStatus) => {
+          const v = await variantWithStock('05-camiseta-preta', 2);
+          const { orderId, paymentId } = await orderWithPix(v.id);
+          setRemote(paymentId, remoteStatus);
+          await failUntil(orderId, 3);
+          const midway = await paymentOf(orderId);
+
+          await webhook(paymentId).expect(200);
+          expect(await paymentOf(orderId)).toEqual(midway);
+
+          await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+          const stopped = await paymentOf(orderId);
+          await webhook(paymentId).expect(200);
+          expect(await paymentOf(orderId)).toEqual(stopped);
+        },
+      );
+
+      it('verificação sob demanda com resposta sem classificação não soma nem zera', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        setRemote(paymentId, { status: 'processed', statusDetail: null });
+        await failUntil(orderId, 3);
+        const { nextCheckAt } = await paymentOf(orderId);
+        mp.getSpy.mockClear();
+
+        await http().get(`/api/orders/${orderId}/pix`).set('X-Forwarded-For', nextIp()).expect(200);
+
+        expect(mp.getSpy).toHaveBeenCalledTimes(1);
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'PENDING',
+          checkFailures: 3,
+          nextCheckAt,
+        });
+      });
+
+      it('resposta do cancelamento sem classificação não soma nem zera, e o cancelamento falha', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const remote = mp.remote.get(paymentId)!;
+        setRemote(paymentId, { status: 'processed', statusDetail: null });
+        await failUntil(orderId, 3);
+        const before = await paymentOf(orderId);
+        mp.cancelSpy.mockResolvedValueOnce({ ...remote, status: 'processed', statusDetail: null });
+
+        await expect(
+          ctx.app.get(AdminOrdersService).updateStatus(orderId, 'CANCELED'),
+        ).rejects.toThrow(/Não foi possível cancelar o Pix/);
+
+        expect(await paymentOf(orderId)).toEqual(before);
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+      });
+
+      it('webhook sem classificação no meio da consulta da rodada: a falha da rodada conta', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        setRemote(paymentId, { status: 'processed', statusDetail: null });
+        const remote = mp.remote.get(paymentId)!;
+        mp.getSpy.mockImplementationOnce(async () => {
+          await webhook(paymentId).expect(200);
+          return { ...remote };
+        });
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+
+        expect(mp.getSpy).toHaveBeenCalledTimes(2);
+        const row = await paymentOf(orderId);
+        expect(row.checkFailures).toBe(1);
+        expectNextCheckIn(row, intervalMs);
+      });
+
+      it('webhook com status conhecido no meio da consulta da rodada: a resposta sem classificação não conta', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const remote = mp.remote.get(paymentId)!;
+        mp.getSpy.mockImplementationOnce(async () => {
+          await webhook(paymentId).expect(200);
+          return { ...remote, status: 'processed', statusDetail: null };
+        });
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 1 });
+
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'PENDING',
+          checkFailures: 0,
+          nextCheckAt: null,
+        });
+      });
+
+      it('status conhecido depois do teto aplica a transição e zera; o alerta fica no histórico', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        setRemote(paymentId, { status: 'processed', statusDetail: 'em_revisao' });
+        await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+
+        approve(paymentId);
+        await webhook(paymentId).expect(200);
+
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'APPROVED',
+          checkFailures: 0,
+          nextCheckAt: null,
+        });
+        expect(await orderStatus(orderId)).toBe('PAID');
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+        expect(await alertsOf(orderId)).toEqual(['RECONCILIATION_STOPPED']);
+      });
+
+      it('status conhecido ainda pendente depois do teto zera, e a conciliação volta a selecionar', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        setRemote(paymentId, { status: 'processed', statusDetail: null });
+        await failUntil(orderId, RECONCILIATION_MAX_FAILURES);
+
+        setRemote(paymentId, mpStatus.pending);
+        await webhook(paymentId).expect(200);
+
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'PENDING',
+          checkFailures: 0,
+          nextCheckAt: null,
+        });
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+      });
+
+      it.each([
+        ['processed/<desconhecido>', { status: 'processed', statusDetail: 'em_revisao' }],
+        ['processed/null', { status: 'processed', statusDetail: null }],
+        ['cancelled/cancelled', { status: 'cancelled', statusDetail: 'cancelled' }],
+        ['failed/<desconhecido>', { status: 'failed', statusDetail: 'em_revisao' }],
+        ['failed/null', { status: 'failed', statusDetail: null }],
+      ] as const)(
+        'cobrança APPROVED + %s: nada muda, sem falha, e a reconsulta de 6 h continua',
+        async (_label, remoteStatus) => {
+          const v = await variantWithStock('05-camiseta-preta', 2);
+          const { orderId, paymentId } = await orderWithPix(v.id);
+          approve(paymentId);
+          await reconciliation.reconcile();
+          const paid = await paymentOf(orderId);
+          setRemote(paymentId, remoteStatus);
+
+          await checkedAgo(orderId, 7 * 3600);
+          expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+          const row = await paymentOf(orderId);
+          expect(row).toMatchObject({
+            status: 'APPROVED',
+            checkFailures: 0,
+            nextCheckAt: null,
+            alert: null,
+            approvedAt: paid.approvedAt,
+          });
+          expect(await alertsOf(orderId)).toEqual([]);
+          expect(await orderStatus(orderId)).toBe('PAID');
+          expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+
+          // Conferido agora: só volta daqui a 6 h, e então volta.
+          expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+          await checkedAgo(orderId, 7 * 3600);
+          expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+        },
+      );
+    });
+
+    describe('order failed com detalhe desconhecido ou nulo (spec-028)', () => {
+      const failedUnknown = [
+        ['failed/<desconhecido>', { status: 'failed', statusDetail: 'em_revisao' }],
+        ['failed/null', { status: 'failed', statusDetail: null }],
+      ] as const;
+
+      function expectLogged(
+        paymentId: string,
+        remoteStatus: Pick<ProviderPayment, 'status' | 'statusDetail'>,
+      ) {
+        const seen = `"${remoteStatus.status}/${remoteStatus.statusDetail ?? ''}"`;
+        expect(warnings().some((w) => w.includes(seen) && w.includes(paymentId))).toBe(true);
+      }
+
+      it.each(failedUnknown)(
+        '%s pela conciliação → REJECTED, zera, não volta à seleção e fica no log',
+        async (_label, remoteStatus) => {
+          const v = await variantWithStock('05-camiseta-preta', 2);
+          const { orderId, paymentId } = await orderWithPix(v.id);
+          const remote = mp.remote.get(paymentId)!;
+          goneFromMp(paymentId);
+          await failUntil(orderId, 2);
+          mp.remote.set(paymentId, { ...remote, ...remoteStatus });
+          await backoffElapsed(orderId);
+
+          expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+          expect(await paymentOf(orderId)).toMatchObject({
+            status: 'REJECTED',
+            checkFailures: 0,
+            nextCheckAt: null,
+            alert: null,
+          });
+          expect(await alertsOf(orderId)).toEqual([]);
+          expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+          expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+          expectLogged(paymentId, remoteStatus);
+
+          await checkedAgo(orderId, null);
+          expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+        },
+      );
+
+      it.each(failedUnknown)('%s pelo webhook → REJECTED', async (_label, remoteStatus) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        setRemote(paymentId, remoteStatus);
+
+        await webhook(paymentId).expect(200);
+
+        expect(await paymentOf(orderId)).toMatchObject({ status: 'REJECTED', alert: null });
+        expect(await alertsOf(orderId)).toEqual([]);
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expectLogged(paymentId, remoteStatus);
+      });
+    });
   });
 
   describe('status nunca regride', () => {
@@ -1402,6 +1692,133 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         alert: 'PAYMENT_REVERSED',
       });
       expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+    });
+
+    describe('com total_paid_amount reduzido (spec-028, simulação: a doc do MP não confirma)', () => {
+      /** Estorno parcial com o valor pago R$ 1,00 abaixo do total da order. */
+      function partialRefund(paymentId: string, over: Partial<ProviderPayment> = {}) {
+        const { amountCents } = mp.remote.get(paymentId)!;
+        setRemote(paymentId, {
+          ...mpStatus.partiallyRefunded,
+          paidAmountCents: amountCents - 100,
+          dateLastUpdated: new Date(),
+          ...over,
+        });
+      }
+
+      it('dentro do prazo: pedido PAID, estoque baixa, cobrança APPROVED, só PAYMENT_REVERSED', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        partialRefund(paymentId);
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('PAID');
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'APPROVED',
+          alert: 'PAYMENT_REVERSED',
+        });
+        expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      });
+
+      it('pedido expirado: PAID_AFTER_EXPIRY + PAYMENT_REVERSED, pedido e estoque intactos', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        // O cancelamento falha: a cobrança continua PENDING depois de o pedido expirar.
+        mp.cancelSpy.mockRejectedValueOnce(new PixProviderError('Mercado Pago respondeu 500.'));
+        await ctx.app.get(OrderExpirationService).run(new Date(Date.now() + 31 * 60_000));
+        expect(await orderStatus(orderId)).toBe('EXPIRED');
+        partialRefund(paymentId);
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('EXPIRED');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 0 });
+        expect((await paymentOf(orderId)).status).toBe('APPROVED');
+        expect(await alertsOf(orderId)).toEqual(['PAID_AFTER_EXPIRY', 'PAYMENT_REVERSED']);
+      });
+
+      it('pedido já pago: DUPLICATE_PAYMENT + PAYMENT_REVERSED, estoque baixa uma vez só', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        await ctx.app.get(AdminOrdersService).updateStatus(orderId, 'PAID');
+        // Pago pelo painel antes da spec-019, quando o Pix ficava PENDING (hoje o painel o cancela).
+        await ctx.db
+          .update(payments)
+          .set({ status: 'PENDING' })
+          .where(eq(payments.orderId, orderId));
+        partialRefund(paymentId);
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('PAID');
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+        expect((await paymentOf(orderId)).status).toBe('APPROVED');
+        expect(await alertsOf(orderId)).toEqual(['DUPLICATE_PAYMENT', 'PAYMENT_REVERSED']);
+      });
+
+      it('limite conhecido: last_updated_date depois do vencimento cai em PAID_AFTER_EXPIRY', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const [{ expiresAt }] = await ctx.db
+          .select({ expiresAt: orders.expiresAt })
+          .from(orders)
+          .where(eq(orders.id, orderId));
+        const refundedAt = new Date(expiresAt.getTime() + 60_000);
+        partialRefund(paymentId, { dateLastUpdated: refundedAt });
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'APPROVED',
+          approvedAt: refundedAt,
+        });
+        expect(await alertsOf(orderId)).toEqual(['PAID_AFTER_EXPIRY', 'PAYMENT_REVERSED']);
+      });
+
+      it('valor pago acima do total segue AMOUNT_MISMATCH, e o estorno também alerta', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const { amountCents } = mp.remote.get(paymentId)!;
+        partialRefund(paymentId, { paidAmountCents: amountCents + 1 });
+
+        await reconciliation.reconcile();
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expect(await alertsOf(orderId)).toEqual(['AMOUNT_MISMATCH', 'PAYMENT_REVERSED']);
+      });
+
+      it.each([
+        ['valor', { amountCents: 1 }],
+        ['moeda', { currency: 'USD' }],
+        ['referência', { externalReference: randomUUID() }],
+      ])('%s divergente segue AMOUNT_MISMATCH', async (_label, over) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        partialRefund(paymentId, over);
+
+        await reconciliation.reconcile();
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await alertsOf(orderId)).toEqual(['AMOUNT_MISMATCH', 'PAYMENT_REVERSED']);
+      });
+
+      it('accredited com valor pago reduzido segue AMOUNT_MISMATCH, sem PAYMENT_REVERSED', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const { amountCents } = mp.remote.get(paymentId)!;
+        approve(paymentId, { paidAmountCents: amountCents - 100 });
+
+        await reconciliation.reconcile();
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expect(await alertsOf(orderId)).toEqual(['AMOUNT_MISMATCH']);
+      });
     });
   });
 
