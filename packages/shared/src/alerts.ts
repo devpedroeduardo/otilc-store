@@ -80,7 +80,7 @@ export const paymentAlertGuides: Record<PaymentAlertType, AlertGuide> = {
   RECONCILIATION_STOPPED: {
     title: 'Conciliação parou',
     action:
-      'O Mercado Pago falhou 8 vezes seguidas; confira o pagamento no painel do MP e use "Retomar conciliação".',
+      'A conciliação parou depois de 8 consultas seguidas sem resultado; confira o pagamento no painel do MP e use "Retomar conciliação".',
   },
 };
 
