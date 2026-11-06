@@ -197,11 +197,11 @@ export class PaymentTransitionService {
 
       const approvedAt = this.approvedAt(remote);
       // Aqui `reversed` só pode ser `processed/partially_refunded`: o estorno pode reduzir o valor
-      // pago, então só um valor acima do total reprova (spec-028). `accredited` exige o valor exato.
+      // pago, mas zero ou acima do total reprova (spec-028). `accredited` exige o valor exato.
       const paidMatches =
         remote.paidAmountCents === null ||
         (reversed
-          ? remote.paidAmountCents <= order.totalCents
+          ? remote.paidAmountCents > 0 && remote.paidAmountCents <= order.totalCents
           : remote.paidAmountCents === order.totalCents);
       const matches =
         remote.externalReference === order.id &&

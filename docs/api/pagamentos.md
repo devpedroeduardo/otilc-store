@@ -168,7 +168,7 @@ Mapeamento do status da order (`status` e `status_detail`, nível da order, não
 | `failed` com outro detalhe ou sem detalhe                                                  | `REJECTED`, com aviso no log com o status e o detalhe                            |
 | qualquer outro (`processed` com outro detalhe ou sem detalhe, status de topo desconhecido) | sem classificação: o status da cobrança não muda, e a resposta vai para o log    |
 
-Valor e moeda vêm da order: `total_amount` (texto, ex.: `"259.80"`) vira centavos sem ponto flutuante; formato inválido é falha do provedor. `total_paid_amount`, quando vier, também precisa ser igual ao total do pedido. Em `processed/partially_refunded` ele só reprova quando é maior que o total, porque o estorno pode reduzir o valor pago (a documentação do Mercado Pago não confirma essa redução, que fica para verificar na homologação). Moeda: `currency_id` (ou `currency`) quando vier; senão vale `BRL` se `country_code` for `BRA`.
+Valor e moeda vêm da order: `total_amount` (texto, ex.: `"259.80"`) vira centavos sem ponto flutuante; formato inválido é falha do provedor. `total_paid_amount`, quando vier, também precisa ser igual ao total do pedido. Em `processed/partially_refunded`, quando vier, ele precisa ser maior que 0 e no máximo igual ao total, porque o estorno pode reduzir o valor pago (a documentação do Mercado Pago não confirma essa redução, que fica para verificar na homologação). Moeda: `currency_id` (ou `currency`) quando vier; senão vale `BRL` se `country_code` for `BRA`.
 
 Efeito da transição, pela order vinda da consulta ao Mercado Pago ("aprovada" = `processed/accredited` ou `processed/partially_refunded`):
 
