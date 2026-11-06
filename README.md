@@ -100,7 +100,15 @@ docker compose run --rm seed            # opcional: carrega as 17 peças do Drop
 
 O `up` cria as tabelas e não mexe nos dados, mesmo repetido, então a loja começa vazia até você rodar o seed. O seed **apaga todos os dados do banco**, inclusive pedidos, antes de carregar as peças. Se alterou o código ou os dados do seed, rode com `--build`.
 
-Nesse modo o Pix fica desligado, como no `npm run dev` sem credenciais. O painel administrativo não funciona: a loja encaminha `/api/admin` para o endereço gravado no build (`localhost:3333`), que dentro do contêiner não é a API. Não rode junto com `npm run dev`, porque os dois usam as mesmas portas.
+Nesse modo o Pix fica desligado, como no `npm run dev` sem credenciais. Não rode junto com `npm run dev`, porque os dois usam as mesmas portas.
+
+O seed não cria admin. Para usar o painel, crie um com os contêineres no ar, num terminal interativo:
+
+```bash
+docker compose run --rm api node /repo/apps/api/dist/scripts/create-admin.js
+```
+
+O script pede e-mail, nome, papel (`OWNER` ou `STAFF`) e senha, que não aparece na tela. Depois, entre em <http://localhost:3000/admin/login> com esse e-mail e essa senha.
 
 Para testar o Pix de ponta a ponta na sua máquina (Mercado Pago sandbox e webhook por túnel), siga o roteiro em [docs/homologacao-local.md](docs/homologacao-local.md).
 
