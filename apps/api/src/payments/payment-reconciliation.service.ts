@@ -18,7 +18,10 @@ export const LEGACY_ID_PAUSE_HOURS = 24;
 export interface ReconciliationResult {
   /** Pagamentos reivindicados e consultados no Mercado Pago nesta rodada. */
   checked: number;
-  /** Consultas ou transições que falharam (voltam depois do backoff, até o teto). */
+  /**
+   * Consultas ou transições que falharam, ou respostas sem classificação de uma cobrança PENDING
+   * (voltam depois do backoff, até o teto).
+   */
   failed: number;
 }
 
@@ -171,12 +174,17 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
         );
         continue;
       }
+      let failure: string | null = null;
       try {
         // Sucesso zera o backoff dentro da transição (vale também para o webhook).
-        await this.transition.sync(payment.providerPaymentId);
+        const outcome = await this.transition.sync(payment.providerPaymentId);
+        if (outcome === 'pending_unclassified') failure = 'resposta sem classificação';
       } catch (err) {
+        failure = (err as Error).message;
+      }
+      if (failure !== null) {
         failed++;
-        await this.recordFailure(payment, (err as Error).message);
+        await this.recordFailure(payment, failure);
       }
     }
     if (skipped.length > 0) {
@@ -196,6 +204,7 @@ export class PaymentReconciliationService implements OnModuleInit, OnApplication
    * Conta a falha num UPDATE só (spec-020): `check_failures + 1`, a próxima consulta com backoff
    * e o `last_checked_at` de antes da reivindicação (um APPROVED não espera 6 h, só o backoff).
    * Na 8ª falha seguida, sem próxima consulta, grava RECONCILIATION_STOPPED na mesma transação.
+   * Falha é erro do Mercado Pago ou resposta sem classificação de uma cobrança PENDING (spec-028).
    *
    * Só se ninguém conferiu o pagamento depois da reivindicação (o banco guarda microssegundos e o
    * `Date` só milissegundos, por isso o limite é `claimedAt + 1 ms`), se o contador não mudou e se

@@ -16,6 +16,7 @@ export type SyncOutcome =
   | 'duplicate'
   | 'unknown_payment'
   | 'unknown_status'
+  | 'pending_unclassified'
   | 'updated'
   | 'paid'
   | 'already_approved'
@@ -125,18 +126,22 @@ export class PaymentTransitionService {
         .where(eq(payments.id, local.id))
         .for('update');
 
+      const status = toChargeStatus(remote.status, remote.statusDetail);
+      const reversed = isReversal(remote.status, remote.statusDetail);
+      // Cobrança PENDING com resposta sem classificação: a loja não sabe o que aconteceu, então
+      // nada zera, venha de onde vier, e só a rodada de conciliação conta a falha (spec-028).
+      const unclassified = !status && payment.status === 'PENDING';
+
       // O Mercado Pago respondeu: o pagamento existe e o backoff da conciliação recomeça do zero,
       // inclusive no teto (spec-020). Apagar `next_check_at` também invalida uma reivindicação em
       // andamento, cuja falha deixa de contar. O alerta RECONCILIATION_STOPPED fica como histórico.
-      if (payment.checkFailures > 0 || payment.nextCheckAt) {
+      if (!unclassified && (payment.checkFailures > 0 || payment.nextCheckAt)) {
         await tx
           .update(payments)
           .set({ checkFailures: 0, nextCheckAt: null })
           .where(eq(payments.id, payment.id));
       }
 
-      const status = toChargeStatus(remote.status, remote.statusDetail);
-      const reversed = isReversal(remote.status, remote.statusDetail);
       if (payment.status === 'APPROVED' && reversed) {
         // Estornado (todo ou em parte) ou contestado depois de pago: só alerta, o pedido não muda
         // (estorno manual). Um alerta anterior (ex.: PAID_AFTER_EXPIRY) fica gravado ao lado.
@@ -159,7 +164,14 @@ export class PaymentTransitionService {
         this.logger.warn(
           `Status "${remote.status}/${remote.statusDetail ?? ''}" sem efeito no pagamento ${providerPaymentId}; nada mudou.`,
         );
-        return 'unknown_status';
+        return unclassified ? 'pending_unclassified' : 'unknown_status';
+      }
+
+      if (status === 'REJECTED' && remote.statusDetail !== 'failed') {
+        // O alerta não guarda motivo: é neste log que aprendemos um detalhe novo do Mercado Pago.
+        this.logger.warn(
+          `Status "${remote.status}/${remote.statusDetail ?? ''}" com detalhe desconhecido no pagamento ${providerPaymentId}; classificado como REJECTED.`,
+        );
       }
 
       if (status !== 'APPROVED') {
@@ -184,10 +196,17 @@ export class PaymentTransitionService {
       if (payment.status === 'REFUNDED') return 'updated';
 
       const approvedAt = this.approvedAt(remote);
+      // Aqui `reversed` só pode ser `processed/partially_refunded`: o estorno pode reduzir o valor
+      // pago, então só um valor acima do total reprova (spec-028). `accredited` exige o valor exato.
+      const paidMatches =
+        remote.paidAmountCents === null ||
+        (reversed
+          ? remote.paidAmountCents <= order.totalCents
+          : remote.paidAmountCents === order.totalCents);
       const matches =
         remote.externalReference === order.id &&
         remote.amountCents === order.totalCents &&
-        (remote.paidAmountCents === null || remote.paidAmountCents === order.totalCents) &&
+        paidMatches &&
         remote.currency === 'BRL';
 
       let outcome: SyncOutcome;
@@ -240,6 +259,8 @@ export class PaymentTransitionService {
    * (este método só roda na passagem de PENDING para APPROVED). A referência do
    * `GET /v1/orders/{id}` não traz data de aprovação, nem na order nem na transação (spec-021).
    * Sem a data, vale a hora atual, e isso vai para o log: decide se o pagamento entrou no prazo.
+   * Vista pela primeira vez já com estorno parcial, a data pode ser a do estorno: pago no prazo e
+   * estornado depois do vencimento cai em PAID_AFTER_EXPIRY (limite aceito na spec-028).
    */
   private approvedAt(remote: ProviderPayment): Date {
     if (remote.dateLastUpdated) return remote.dateLastUpdated;
