@@ -1,7 +1,8 @@
 FROM node:22-alpine AS build
 WORKDIR /repo
 ARG NEXT_PUBLIC_API_URL=http://localhost:3333
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_TELEMETRY_DISABLED=1
+ARG API_URL=http://localhost:3333
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL API_URL=$API_URL NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/web/package.json apps/web/
