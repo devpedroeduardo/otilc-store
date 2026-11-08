@@ -517,5 +517,44 @@ describe('Admin: painel de alertas de pagamento (integração com Postgres)', ()
       expect(alertWarnings(providerPaymentId, 'PAYMENT_REVERSED')).toHaveLength(1);
       expect((await paymentOf(orderId)).status).toBe('APPROVED');
     });
+
+    it('PAYMENT_REVERSED de charged_back em cobrança PENDING: resolvido não reabre, e o painel mostra a parada ao lado (spec-029)', async () => {
+      const v = await variantWithStock(2);
+      const { payment, providerPaymentId, orderId } = await orderWithPix(v.id);
+      mp.remote.set(providerPaymentId, {
+        ...mp.remote.get(providerPaymentId)!,
+        ...mpStatus.chargedBack,
+      });
+      await webhook(providerPaymentId).expect(200);
+      const [alert] = await alertsOfPayment(payment.id);
+      expect(alert.alert).toBe('PAYMENT_REVERSED');
+      expect((await list().expect(200)).body.items).toEqual([
+        expect.objectContaining({ id: alert.id, type: 'PAYMENT_REVERSED' }),
+      ]);
+      await post(alert.id, 'resolve').expect(200);
+      const resolved = await alertRow(alert.id);
+
+      await webhook(providerPaymentId).expect(200);
+      await failUntilStopped(payment.id);
+
+      const alerts = await alertsOfPayment(payment.id);
+      expect(alerts).toHaveLength(2);
+      expect(alerts).toContainEqual(resolved);
+      const stopped = alerts.find((a) => a.alert === 'RECONCILIATION_STOPPED')!;
+      expect(stopped.resolvedAt).toBeNull();
+      // Um item por alerta: o aberto na lista padrão, o resolvido no filtro de resolvidos.
+      expect((await list().expect(200)).body.items).toEqual([
+        expect.objectContaining({ id: stopped.id, type: 'RECONCILIATION_STOPPED' }),
+      ]);
+      expect((await list('?situacao=resolvidos').expect(200)).body.items).toEqual([
+        expect.objectContaining({ id: alert.id, type: 'PAYMENT_REVERSED' }),
+      ]);
+      expect(alertWarnings(providerPaymentId, 'PAYMENT_REVERSED')).toHaveLength(1);
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'PENDING',
+        approvedAt: null,
+        alert: 'PAYMENT_REVERSED',
+      });
+    });
   });
 });

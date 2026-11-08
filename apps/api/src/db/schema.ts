@@ -42,9 +42,9 @@ export const paymentAlert = pgEnum('payment_alert', [
   'AMOUNT_MISMATCH',
   // Pedido já pago (ou enviado) por outro caminho, como o painel.
   'DUPLICATE_PAYMENT',
-  // Pago e depois estornado ou contestado no Mercado Pago; o pedido não muda (spec-015).
+  // Estornado ou contestado depois de pago, ou contestado antes; o pedido não muda (spec-015, spec-029).
   'PAYMENT_REVERSED',
-  // A consulta ao Mercado Pago falhou 8 vezes seguidas e a conciliação parou (spec-020).
+  // A conciliação fez 8 consultas seguidas sem resultado (erro ou resposta sem classificação numa cobrança PENDING) e parou (spec-020, spec-028).
   'RECONCILIATION_STOPPED',
 ]);
 
