@@ -164,6 +164,16 @@ export class PaymentTransitionService {
         this.logger.warn(
           `Status "${remote.status}/${remote.statusDetail ?? ''}" sem efeito no pagamento ${providerPaymentId}; nada mudou.`,
         );
+        if (unclassified && reversed) {
+          // `charged_back/*` numa cobrança PENDING: grava só o alerta, já na primeira resposta. A
+          // cobrança, o pedido e o estoque não mudam, e a conciliação conta a falha (spec-029).
+          await this.recordAlert(tx, {
+            paymentId: payment.id,
+            providerPaymentId,
+            orderId: order.id,
+            alert: 'PAYMENT_REVERSED',
+          });
+        }
         return unclassified ? 'pending_unclassified' : 'unknown_status';
       }
 
