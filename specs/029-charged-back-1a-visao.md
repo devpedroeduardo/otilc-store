@@ -27,20 +27,20 @@ Quando a primeira resposta do Mercado Pago sobre uma cobrança local `PENDING` j
 3. O backoff da spec-028 não muda: a rodada de conciliação conta a resposta como falha e a 8ª grava `RECONCILIATION_STOPPED`. A Forja confere como `payments.alert` (COALESCE em `payment-reconciliation.service.ts:298-301`) fica com os dois alertas e escreve em `docs/api/pagamentos.md` o que o painel mostra.
 4. A regra vale para qualquer origem: rodada de conciliação, webhook, `GET /api/orders/:id/pix` e resposta do cancelamento na expiração. Repetições seguem a regra que já vale na cobrança `APPROVED`: o alerta não duplica e, depois de resolvido, não reabre.
 5. A regra vale também com o pedido `EXPIRED` ou já `PAID` por outro caminho, sem mexer em pedido nem estoque.
-6. `apps/api/src/db/schema.ts:47`: só o comentário muda, para `// A conciliação fez 8 consultas seguidas sem resultado (erro ou resposta sem classificação numa cobrança PENDING) e parou (spec-020, spec-028).` A Forja roda `npm run db:generate -w @otilc/api` e confirma que não sai migração.
-7. `docs/api/pagamentos.md`: tabela de mapeamento (`:165`), desfechos (`:183`, `:185`), alerta `PAYMENT_REVERSED` (`:204`, que hoje diz "depois de aprovado") e resposta sem classificação (`:227`), mais o trecho que descrever a regra nova e o item 3.
+6. `apps/api/src/db/schema.ts:47`: só o comentário muda, para `// A conciliação fez 8 consultas seguidas sem resultado (erro ou resposta sem classificação numa cobrança PENDING) e parou (spec-020, spec-028).` Ajuste mínimo também no comentário da L45 (`PAYMENT_REVERSED`), que fala só de estorno ou contestação depois de pago e ficaria incompleto com o item 1. A Forja roda `npm run db:generate -w @otilc/api` e confirma que não sai migração.
+7. `docs/api/pagamentos.md`: tabela de mapeamento (`:165`), desfechos (`:183`, `:185`), alerta `PAYMENT_REVERSED` (`:204`, que hoje diz "depois de aprovado") e resposta sem classificação (`:227`), mais o trecho que descrever a regra nova e o item 3. Ajuste mínimo também no item Reabertura (`:210`), que diz que o pagamento local segue `APPROVED` e ficaria incompleto com o item 1, sem regra nova.
 8. Linha 028 do scorecard, em commit separado: copiar a linha de "Dados da linha 028 do scorecard" na nota "spec-028 R1 R2 021".
 
 ## Arquivos permitidos
 
 - `apps/api/src/payments/payment-transition.service.ts` e a spec ao lado, se existir
 - `apps/api/test/payment-reconciliation.e2e-spec.ts`, `apps/api/test/payments.e2e-spec.ts`, `apps/api/test/admin-alerts.e2e-spec.ts`, `apps/api/test/pix-setup.ts`
-- `apps/api/src/db/schema.ts` (só o comentário da L47)
+- `apps/api/src/db/schema.ts` (só os comentários da L45 e da L47)
 - `docs/api/pagamentos.md` (só os trechos do item 7)
 - `docs/agents/scorecard.md` (só a linha 028 e o realinhamento que o Prettier exigir)
 - `specs/029-charged-back-1a-visao.md`
 
-Esta spec autoriza as mudanças de contrato acima em `apps/api/src/db/schema.ts` (comentário) e `docs/api/pagamentos.md`, e nenhuma outra.
+Esta spec autoriza as mudanças de contrato acima em `apps/api/src/db/schema.ts` (comentários) e `docs/api/pagamentos.md`, e nenhuma outra.
 
 A Forja para e avisa a Bússola, sem ampliar a spec, em qualquer um destes casos:
 
