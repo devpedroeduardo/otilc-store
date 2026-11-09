@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { loadEnv, pixConfig } from './env';
+import { emailConfig, loadEnv, pixConfig } from './env';
 
 const DATABASE_URL = 'postgres://u@localhost:5432/db';
 // Valores gerados na hora: nenhum segredo real no teste.
@@ -124,5 +124,71 @@ describe('loadEnv', () => {
       expect((err as Error).message).not.toContain(token);
       expect((err as Error).message).not.toContain(pix.MP_WEBHOOK_SECRET);
     }
+  });
+
+  describe('e-mail de confirmação (spec-036)', () => {
+    // Chave gerada na hora, com o prefixo do Resend: nenhum valor real no teste.
+    const resendKey = `re_teste_${randomBytes(16).toString('hex')}`;
+    const resend = {
+      EMAIL_PROVIDER: 'resend',
+      RESEND_API_KEY: resendKey,
+      EMAIL_FROM: 'OTILC <pedidos@example.com>',
+    };
+
+    it('sem nenhuma variável de e-mail, carrega com log, sem reply-to e intervalo de 30 s', () => {
+      const env = loadEnv({ DATABASE_URL });
+      expect(env.EMAIL_PROVIDER).toBe('log');
+      expect(env.EMAIL_OUTBOX_INTERVAL_MS).toBe(30_000);
+      expect(emailConfig(env)).toEqual({ provider: 'log', replyTo: null });
+      // Também em produção: o envio real só liga depois de o domínio ser verificado.
+      expect(emailConfig(loadEnv(prod))).toEqual({ provider: 'log', replyTo: null });
+    });
+
+    it('EMAIL_PROVIDER=resend sem RESEND_API_KEY ou sem EMAIL_FROM não carrega', () => {
+      expect(() => loadEnv({ DATABASE_URL, ...resend, RESEND_API_KEY: '' })).toThrow(
+        /RESEND_API_KEY: Obrigatória com EMAIL_PROVIDER=resend/,
+      );
+      expect(() => loadEnv({ DATABASE_URL, ...resend, EMAIL_FROM: undefined })).toThrow(
+        /EMAIL_FROM/,
+      );
+    });
+
+    it('com resend completo, devolve chave, remetente e reply-to', () => {
+      const env = loadEnv({ ...prod, ...resend, EMAIL_REPLY_TO: 'atendimento@example.com' });
+      expect(emailConfig(env)).toEqual({
+        provider: 'resend',
+        apiKey: resendKey,
+        from: 'OTILC <pedidos@example.com>',
+        replyTo: 'atendimento@example.com',
+      });
+    });
+
+    it('valida provedor, remetente, reply-to e intervalo', () => {
+      expect(() => loadEnv({ DATABASE_URL, EMAIL_PROVIDER: 'smtp' })).toThrow(/EMAIL_PROVIDER/);
+      for (const bad of ['sem-arroba', 'OTILC pedidos@example.com', 'OTILC <a b@example.com>']) {
+        expect(() => loadEnv({ DATABASE_URL, EMAIL_FROM: bad })).toThrow(/EMAIL_FROM/);
+      }
+      expect(loadEnv({ DATABASE_URL, EMAIL_FROM: 'pedidos@example.com' }).EMAIL_FROM).toBe(
+        'pedidos@example.com',
+      );
+      expect(() => loadEnv({ DATABASE_URL, EMAIL_REPLY_TO: 'nao-e-email' })).toThrow(
+        /EMAIL_REPLY_TO/,
+      );
+      for (const bad of ['4999', '3600001', 'abc']) {
+        expect(() => loadEnv({ DATABASE_URL, EMAIL_OUTBOX_INTERVAL_MS: bad })).toThrow(
+          /EMAIL_OUTBOX_INTERVAL_MS/,
+        );
+      }
+    });
+
+    it('o erro de configuração não traz a chave do Resend', () => {
+      try {
+        loadEnv({ DATABASE_URL, ...resend, EMAIL_FROM: '' });
+        throw new Error('deveria falhar');
+      } catch (err) {
+        expect((err as Error).message).toMatch(/EMAIL_FROM/);
+        expect((err as Error).message).not.toContain(resendKey);
+      }
+    });
   });
 });

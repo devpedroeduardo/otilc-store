@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { OrderStatus } from '@otilc/shared';
 import type { Database } from '../db/client';
+import type { EmailOutboxService } from '../email/email-outbox.service';
 import type {
   CancelChargeResult,
   PaymentReconciliationService,
@@ -55,9 +56,12 @@ function setup(
       return result;
     }),
   };
+  // O e-mail de confirmação só é gravado dentro da transação, que aqui não roda (spec-036, e2e).
+  const email = { enqueueOrderConfirmation: jest.fn(), kick: jest.fn() };
   const service = new AdminOrdersService(
     db as unknown as Database,
     payments as unknown as PaymentReconciliationService,
+    email as unknown as EmailOutboxService,
   );
   return { service, db, payments, events };
 }

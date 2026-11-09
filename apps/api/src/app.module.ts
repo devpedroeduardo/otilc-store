@@ -8,6 +8,7 @@ import { AdminOrdersModule } from './admin-orders/admin-orders.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ENV, type Env } from './config/env';
 import { DatabaseModule } from './db/database.module';
+import { EmailModule } from './email/email.module';
 import { HealthController } from './health/health.controller';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
@@ -27,6 +28,7 @@ export class AppModule {
         // Limite geral por IP: 120 requisições por minuto.
         ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 120 }]),
         DatabaseModule,
+        EmailModule,
         CatalogModule,
         OrdersModule,
         AdminAuthModule,

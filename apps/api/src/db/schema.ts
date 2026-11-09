@@ -293,6 +293,43 @@ export const paymentAlerts = pgTable(
   ],
 ).enableRLS();
 
+/**
+ * Outbox dos e-mails da loja (spec-036). A linha entra na mesma transação que muda o pedido para
+ * PAID; o envio acontece depois, fora dela (`EmailOutboxService`). `UNIQUE (order_id, kind)`
+ * garante um e-mail de cada tipo por pedido, mesmo com o pagamento reprocessado.
+ * `attempts` conta as tentativas já começadas; `next_attempt_at` é quando a linha pode ser
+ * reivindicada de novo (backoff, ou o prazo de uma reivindicação em andamento).
+ */
+export const emailOutbox = pgTable(
+  'email_outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id),
+    kind: varchar('kind', { length: 40 }).notNull(),
+    status: varchar('status', { length: 10 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    // Motivo curto da última falha (status HTTP, código do provedor). Nunca dados do cliente.
+    lastError: varchar('last_error', { length: 200 }),
+    providerMessageId: varchar('provider_message_id', { length: 100 }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('email_outbox_order_kind_unique').on(t.orderId, t.kind),
+    // Varredura do worker: só as pendentes, pela próxima tentativa.
+    index('email_outbox_pending_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`${t.status} = 'pending'`),
+    check('email_outbox_kind_valid', sql`${t.kind} IN ('order_confirmation')`),
+    check('email_outbox_status_valid', sql`${t.status} IN ('pending', 'sent', 'failed')`),
+    check('email_outbox_attempts_non_negative', sql`${t.attempts} >= 0`),
+    check('email_outbox_sent_has_sent_at', sql`${t.status} <> 'sent' OR ${t.sentAt} IS NOT NULL`),
+  ],
+).enableRLS();
+
 export const categoriesRelations = relations(categories, ({ many }) => ({
   products: many(products),
 }));
