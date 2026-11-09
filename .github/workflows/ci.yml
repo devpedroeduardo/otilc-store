@@ -131,19 +131,19 @@ jobs:
           services:
             migrate:
               build:
-                cache_from: [type=gha,scope=compose-api]
+                cache_from: ['type=gha,scope=compose-api']
             api:
               build:
-                cache_from: [type=gha,scope=compose-api]
-                cache_to: [type=gha,scope=compose-api,mode=max,ignore-error=true]
+                cache_from: ['type=gha,scope=compose-api']
+                cache_to: ['type=gha,scope=compose-api,mode=max,ignore-error=true']
             web:
               build:
-                cache_from: [type=gha,scope=compose-web]
-                cache_to: [type=gha,scope=compose-web,mode=max,ignore-error=true]
+                cache_from: ['type=gha,scope=compose-web']
+                cache_to: ['type=gha,scope=compose-web,mode=max,ignore-error=true']
             seed:
               build:
-                cache_from: [type=gha,scope=compose-seed]
-                cache_to: [type=gha,scope=compose-seed,mode=max,ignore-error=true]
+                cache_from: ['type=gha,scope=compose-seed']
+                cache_to: ['type=gha,scope=compose-seed,mode=max,ignore-error=true']
           YAML
           echo "COMPOSE_FILE=docker-compose.yml:$RUNNER_TEMP/compose-ci.yml" >> "$GITHUB_ENV"
       - run: docker compose up -d --build --wait
