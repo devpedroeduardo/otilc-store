@@ -1886,22 +1886,25 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
     });
 
-    describe('com total_paid_amount reduzido (spec-028, simulação: a doc do MP não confirma)', () => {
-      /** Estorno parcial com o valor pago R$ 1,00 abaixo do total da order. */
-      function partialRefund(paymentId: string, over: Partial<ProviderPayment> = {}) {
+    describe('formato real do MP (spec-030, prova de produção de 2026-11-08)', () => {
+      /**
+       * Estorno parcial como o MP de produção respondeu: `processed/partially_refunded` e
+       * `total_paid_amount` igual ao total. O devolvido só vem em `transactions.refunds[]`, que o
+       * cliente descarta (ver o unit de parse em mercadopago.client.spec.ts).
+       */
+      function realPartialRefund(paymentId: string) {
         const { amountCents } = mp.remote.get(paymentId)!;
         setRemote(paymentId, {
           ...mpStatus.partiallyRefunded,
-          paidAmountCents: amountCents - 100,
+          paidAmountCents: amountCents,
           dateLastUpdated: new Date(),
-          ...over,
         });
       }
 
-      it('dentro do prazo: pedido PAID, estoque baixa, cobrança APPROVED, só PAYMENT_REVERSED', async () => {
+      it('1ª visão: pedido PAID, estoque baixa uma vez, cobrança APPROVED, só PAYMENT_REVERSED', async () => {
         const v = await variantWithStock('05-camiseta-preta', 2);
         const { orderId, paymentId } = await orderWithPix(v.id);
-        partialRefund(paymentId);
+        realPartialRefund(paymentId);
 
         expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
 
@@ -1912,6 +1915,86 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
           alert: 'PAYMENT_REVERSED',
         });
         expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      });
+
+      it('cobrança já APPROVED: pedido segue PAID, estoque intacto, alerta PAYMENT_REVERSED', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const { amountCents } = mp.remote.get(paymentId)!;
+        approve(paymentId, { paidAmountCents: amountCents });
+        await reconciliation.reconcile();
+        expect(await orderStatus(orderId)).toBe('PAID');
+        const { approvedAt } = await paymentOf(orderId);
+
+        realPartialRefund(paymentId);
+        await checkedAgo(orderId, 7 * 3600);
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('PAID');
+        expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'APPROVED',
+          alert: 'PAYMENT_REVERSED',
+          approvedAt,
+        });
+        expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      });
+
+      it('payments.updated_at muda quando um alerta novo é gravado, e não muda quando ele se repete', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const { amountCents } = mp.remote.get(paymentId)!;
+        approve(paymentId, { paidAmountCents: amountCents });
+        await reconciliation.reconcile();
+        const approved = await paymentOf(orderId);
+        expect(approved).toMatchObject({ status: 'APPROVED', alert: null });
+        await sleep(20);
+
+        realPartialRefund(paymentId);
+        await checkedAgo(orderId, 7 * 3600);
+        await reconciliation.reconcile();
+        const reversed = await paymentOf(orderId);
+        expect(reversed.alert).toBe('PAYMENT_REVERSED');
+        expect(reversed.updatedAt.getTime()).toBeGreaterThan(approved.updatedAt.getTime());
+
+        await sleep(20);
+        await checkedAgo(orderId, 7 * 3600);
+        await reconciliation.reconcile();
+        expect((await paymentOf(orderId)).updatedAt).toEqual(reversed.updatedAt);
+        expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      });
+    });
+
+    describe('valor pago no estorno parcial (spec-028; igualdade exata desde a spec-030)', () => {
+      /**
+       * Estorno parcial no formato real, com o valor pago igual ao total. Os casos de valor
+       * diferente sobrescrevem `paidAmountCents`; são simulação.
+       */
+      function partialRefund(paymentId: string, over: Partial<ProviderPayment> = {}) {
+        const { amountCents } = mp.remote.get(paymentId)!;
+        setRemote(paymentId, {
+          ...mpStatus.partiallyRefunded,
+          paidAmountCents: amountCents,
+          dateLastUpdated: new Date(),
+          ...over,
+        });
+      }
+
+      it('valor pago reduzido (simulação) reprova com AMOUNT_MISMATCH, sem pagar o pedido (spec-030)', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        const { amountCents } = mp.remote.get(paymentId)!;
+        partialRefund(paymentId, { paidAmountCents: amountCents - 100 });
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expect(await paymentOf(orderId)).toMatchObject({
+          status: 'APPROVED',
+          alert: 'AMOUNT_MISMATCH',
+        });
+        expect(await alertsOf(orderId)).toEqual(['AMOUNT_MISMATCH', 'PAYMENT_REVERSED']);
       });
 
       it('pedido expirado: PAID_AFTER_EXPIRY + PAYMENT_REVERSED, pedido e estoque intactos', async () => {
@@ -1987,9 +2070,20 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         expect(await alertsOf(orderId)).toEqual(['AMOUNT_MISMATCH', 'PAYMENT_REVERSED']);
       });
 
+      it('total_paid_amount de 1 centavo reprova com AMOUNT_MISMATCH, sem pagar o pedido (spec-030)', async () => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        partialRefund(paymentId, { paidAmountCents: 1 });
+
+        expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+        expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
+        expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
+        expect(await alertsOf(orderId)).toEqual(['AMOUNT_MISMATCH', 'PAYMENT_REVERSED']);
+      });
+
       it.each([
         ['nulo', () => null],
-        ['de 1 centavo', () => 1],
         ['igual ao total', (total: number) => total],
       ])('total_paid_amount %s continua pagando o pedido', async (_label, paid) => {
         const v = await variantWithStock('05-camiseta-preta', 2);
@@ -2004,7 +2098,7 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
         expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
       });
 
-      it('valor pago acima do total segue AMOUNT_MISMATCH, e o estorno também alerta', async () => {
+      it('valor pago acima do total em partially_refunded dá AMOUNT_MISMATCH, e o estorno também alerta (spec-028, spec-030)', async () => {
         const v = await variantWithStock('05-camiseta-preta', 2);
         const { orderId, paymentId } = await orderWithPix(v.id);
         const { amountCents } = mp.remote.get(paymentId)!;

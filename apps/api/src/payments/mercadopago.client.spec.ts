@@ -216,6 +216,53 @@ describe('MercadoPagoClient', () => {
     });
   });
 
+  it('estorno parcial no formato real: refunds[] e paid_amount são ignorados, vale total_paid_amount', async () => {
+    // Formato visto em produção em 2026-11-08 (spec-030): o total pago fica no total da order e o
+    // valor devolvido só aparece em `transactions.refunds[]`. Valores e ids fictícios.
+    const [pix] = created.transactions.payments;
+    const fetchFn = fakeFetch(() =>
+      json({
+        ...created,
+        status: 'processed',
+        status_detail: 'partially_refunded',
+        total_paid_amount: '259.80',
+        currency_id: 'BRL',
+        last_updated_date: '2026-11-08T14:30:00.000-03:00',
+        transactions: {
+          payments: [
+            {
+              ...pix,
+              status: 'processed',
+              status_detail: 'partially_refunded',
+              paid_amount: '259.80',
+            },
+          ],
+          refunds: [
+            {
+              id: 'REF01JP84C939T20S0P1DN382FQ6N',
+              transaction_id: pix.id,
+              amount: '0.50',
+              status: 'processed',
+            },
+          ],
+        },
+      }),
+    );
+
+    const payment = await new MercadoPagoClient(token, fetchFn).getPayment(mpOrderId);
+
+    expect(payment).toEqual({
+      id: mpOrderId,
+      status: 'processed',
+      statusDetail: 'partially_refunded',
+      externalReference: orderId,
+      amountCents: 25980,
+      paidAmountCents: 25980,
+      currency: 'BRL',
+      dateLastUpdated: new Date('2026-11-08T17:30:00.000Z'),
+    });
+  });
+
   it('moeda: currency_id ou currency quando vier; senão BRL só se o país for BRA', async () => {
     const cases = [
       [{ currency_id: 'USD' }, 'USD'],
