@@ -62,3 +62,114 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+
+  # Suíte do navegador (Playwright) com API e loja de verdade. Só valores de teste: o banco é o
+  # serviço abaixo e o globalSetup gera as senhas dos admins na hora, sem gravar em arquivo.
+  e2e-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: otilc
+          POSTGRES_PASSWORD: otilc
+          POSTGRES_DB: otilc_test_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U otilc"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      E2E_DATABASE_URL: postgres://otilc:otilc@localhost:5432/otilc_test_e2e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - run: npm run test:e2e:web
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: e2e/.results/report
+          retention-days: 7
+
+  # Sobe o docker-compose.yml com as imagens dos Dockerfiles e confere API, loja e painel. Pega o
+  # que o Playwright com next dev não pega, como o API_URL de build da loja (rewrite do admin).
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Expõe aos passos seguintes o token de runtime do Actions, que o buildx usa no cache GHA.
+      - uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      # O cache de camadas entra por um arquivo extra, gerado aqui: docker-compose.yml e
+      # Dockerfiles ficam como estão.
+      - name: Cache de camadas no GHA
+        run: |
+          cat > "$RUNNER_TEMP/compose-ci.yml" <<'YAML'
+          services:
+            migrate:
+              build:
+                cache_from: [type=gha,scope=compose-api]
+            api:
+              build:
+                cache_from: [type=gha,scope=compose-api]
+                cache_to: [type=gha,scope=compose-api,mode=max,ignore-error=true]
+            web:
+              build:
+                cache_from: [type=gha,scope=compose-web]
+                cache_to: [type=gha,scope=compose-web,mode=max,ignore-error=true]
+            seed:
+              build:
+                cache_from: [type=gha,scope=compose-seed]
+                cache_to: [type=gha,scope=compose-seed,mode=max,ignore-error=true]
+          YAML
+          echo "COMPOSE_FILE=docker-compose.yml:$RUNNER_TEMP/compose-ci.yml" >> "$GITHUB_ENV"
+      - run: docker compose up -d --build --wait
+      - run: docker compose --profile seed run --rm seed
+      - name: Smoke da API, da loja e do painel
+        run: |
+          # check URL STATUS [TEXTO]: tenta por até ~60 s até a resposta ter o status (e o texto).
+          check() {
+            local url=$1 want=$2 text=${3:-} code=''
+            for _ in $(seq 1 20); do
+              code=$(curl -s -o "$RUNNER_TEMP/body" -w '%{http_code}' --max-time 5 "$url" || true)
+              if [ "$code" = "$want" ] && { [ -z "$text" ] || grep -qF "$text" "$RUNNER_TEMP/body"; }; then
+                echo "ok: $url -> $code"
+                return 0
+              fi
+              sleep 3
+            done
+            echo "::error::$url respondeu $code; esperado $want${text:+ com \"$text\"}"
+            return 1
+          }
+          check http://localhost:3333/api/health 200
+          check http://localhost:3000/ 200 'Air Jordan 3 Retro'
+          check http://localhost:3000/admin/login 200
+          # Sem cookie a API responde 401. Com o API_URL de build errado, o rewrite da loja dá 500.
+          check http://localhost:3000/api/admin/me 401
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v
