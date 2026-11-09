@@ -12,7 +12,7 @@ Roteiro manual para você provar, na sua máquina (WSL), que a loja gera um Pix 
 navegador ──> loja (localhost:3000) ──> API (localhost:3333) ──> Postgres (docker, :5432)
                                           ^        │
                                           │        └──> api.mercadopago.com/v1/orders (cria / consulta / cancela)
-   Mercado Pago ──> https://<seu-dominio>.ngrok-free.app ──> túnel ngrok ──┘   (webhook de order)
+   Mercado Pago ──> https://<seu-dominio>.ngrok-free.dev ──> túnel ngrok ──┘   (webhook de order)
 ```
 
 - Só a API passa pelo túnel (o webhook é de servidor para servidor). A loja fica em `http://localhost:3000`, então CORS e cookie do admin funcionam sem mudança.
@@ -68,16 +68,18 @@ Fonte: documentação oficial do ngrok. Os links estão na seção 10.
 
    Assim o token não aparece na tela nem fica no histórico do shell (o histórico guarda só o nome da variável).
 
-4. Domínio fixo. O plano gratuito inclui um "dev domain" já atribuído à sua conta (algo como `<seu-dominio>.ngrok-free.app`; a documentação mostra também o sufixo `.ngrok-free.dev`). Ele não muda entre sessões, mas o ngrok escolhe o nome e você não pode renomear nem reservar outro ([Free plan limits](https://ngrok.com/docs/pricing-limits/free-plan-limits), [Domains](https://ngrok.com/docs/gateway/domains)). Veja o seu em <https://dashboard.ngrok.com/domains> (não confirmei como essa tela se apresenta no plano gratuito; se não aparecer, o primeiro `ngrok http` imprime o domínio na linha `Forwarding`).
+   Rode este passo num terminal seu. Pelo prefixo `!` do Claude Code não há TTY, então o `read -rsp` não consegue ler sem eco e o passo não funciona.
+
+4. Domínio fixo. O plano gratuito inclui um "dev domain" já atribuído à sua conta (algo como `<seu-dominio>.ngrok-free.dev`, que foi o sufixo do domínio do Pedro; a conta de outra pessoa pode receber `.ngrok-free.app`, e nesse caso você usa o seu sufixo em todo o roteiro). Ele não muda entre sessões, mas o ngrok escolhe o nome e você não pode renomear nem reservar outro ([Free plan limits](https://ngrok.com/docs/pricing-limits/free-plan-limits), [Domains](https://ngrok.com/docs/gateway/domains)). Veja o seu em <https://dashboard.ngrok.com/domains> (não confirmei como essa tela se apresenta no plano gratuito; se não aparecer, o primeiro `ngrok http` imprime o domínio na linha `Forwarding`).
 5. Suba o túnel apontando para a API (deixe este terminal aberto durante todo o roteiro):
 
    ```bash
    ngrok http 3333
    ```
 
-   Sem `--url`, o plano gratuito usa o dev domain automaticamente. Para fixar explicitamente: `ngrok http 3333 --url https://<seu-dominio>.ngrok-free.app`.
+   Sem `--url`, o plano gratuito usa o dev domain automaticamente. Para fixar explicitamente: `ngrok http 3333 --url https://<seu-dominio>.ngrok-free.dev`.
 
-6. Anote a URL `https://<seu-dominio>.ngrok-free.app` da linha `Forwarding`. A interface de inspeção está em <http://127.0.0.1:4040>: lista cada requisição que o Mercado Pago faz, com headers e corpo ([Web inspection](https://ngrok.com/docs/gateway/agent/web-inspection-interface)).
+6. Anote a URL `https://<seu-dominio>.ngrok-free.dev` da linha `Forwarding`. A interface de inspeção está em <http://127.0.0.1:4040>: lista cada requisição que o Mercado Pago faz, com headers e corpo ([Web inspection](https://ngrok.com/docs/gateway/agent/web-inspection-interface)).
 
 A página de aviso do plano gratuito do ngrok aparece só para tráfego de navegador e, segundo a documentação, não afeta quem chama a API por programa, como o Mercado Pago ([Free plan limits](https://ngrok.com/docs/pricing-limits/free-plan-limits)). Se o webhook não chegar à API mesmo com o túnel de pé, comece por aqui e veja a requisição em `:4040`.
 
@@ -89,7 +91,7 @@ Sem conta, mas a URL `https://<algo>.trycloudflare.com` muda a cada subida. Toda
 cloudflared tunnel --url http://localhost:3333
 ```
 
-A URL aparece na saída do comando ([Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/create-local-tunnel/)). Para o resto do roteiro, onde estiver `<seu-dominio>.ngrok-free.app`, use a URL do cloudflared.
+A URL aparece na saída do comando ([Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/create-local-tunnel/)). Para o resto do roteiro, onde estiver `<seu-dominio>.ngrok-free.dev`, use a URL do cloudflared.
 
 ### 2.4 Projeto rodando como no README
 
@@ -122,8 +124,6 @@ A API de Orders recusa um token `TEST-` com `401 invalid_credentials`. No sandbo
 
 ### 3.2 E-mail e nome do pagador no sandbox
 
-> Não revalidado com `APP_USR-`. As regras abaixo foram observadas com a credencial antiga e ficam como registro. Confirme cada uma na primeira rodada com o vendedor de teste e anote o que mudar.
-
 A API de Orders, no ambiente de teste, aceita só o e-mail `test@testuser.com` como pagador ([Realizar uma compra teste com Pix](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/integration-test/pix)); outro e-mail volta `400` (`invalid_email_for_sandbox`). O e-mail de usuário de teste no formato `test_user_<id>@testuser.com` foi recusado na spec-017 com `403` (`cause 4390`, achado 1): registre no caso c se isso ainda acontece.
 
 O status final do Pix de teste depende do primeiro nome do pagador, que a loja tira do campo **Nome** do checkout (a primeira palavra):
@@ -133,7 +133,7 @@ O status final do Pix de teste depende do primeiro nome do pagador, que a loja t
 | `Ana Teste` (qualquer) | fica pendente (`action_required/waiting_transfer`) | c, e, h, j, k |
 | `APRO Teste`           | aprova sozinho logo depois de criar (`processed`)  | d, f, g, i    |
 
-Se estas regras ainda valem com o vendedor de teste, o comprador de teste não é necessário. Anote o que você observar.
+Em 2026-11-09, no sandbox com `APP_USR-`, estas regras foram revalidadas: `test@testuser.com` foi aceito, `APRO` aprovou, `Ana Teste` ficou pendente e o comprador de teste não foi necessário. Se algum resultado for diferente na sua rodada, anote.
 
 ### 3.3 Webhook no painel: evento Order
 
@@ -141,11 +141,13 @@ Se estas regras ainda valem com o vendedor de teste, o comprador de teste não �
 
 Em **Suas integrações → a aplicação do vendedor de teste → Webhooks → Configurar notificações** ([Notificações](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/notifications)):
 
-1. Na **URL modo teste**, coloque `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago`.
+1. Na **URL modo teste**, coloque `https://<seu-dominio>.ngrok-free.dev/api/webhooks/mercadopago`.
 2. Marque o evento **Order (Mercado Pago)**. A loja ignora notificações de **Pagamentos** (`type=payment`, responde `200` sem fazer nada); deixe esse evento ligado só até a virada em produção (seção 9.7).
 3. Na **URL modo produção**, coloque a mesma URL com o mesmo evento (a virada em produção usa a URL do Render; seção 9.7).
 4. **Salvar**. Revele a **assinatura secreta** em Webhooks → Configurar notificação: ela vai para `MP_WEBHOOK_SECRET` (seção 4). Confira se é a mesma que você já usava; se o painel gerar outra para o evento Order, use a nova.
 5. Use o botão **Simular notificação** no caso h-2. Como o sandbox não entrega webhook real, nos casos d, f e g a confirmação do pagamento depende do simulador ou da conciliação.
+
+No webhook real, a query traz `data.external_reference` além de `data.id` e `type=order`. Em produção, o Mercado Pago mandou duas notificações para o mesmo pagamento (uma na criação, outra no pagamento); as duas voltaram `200` e não houve efeito duplicado. Os ids de produção têm o formato `ORD01...` (order) e `PAY01...` (pagamento).
 
 A API de Orders não tem `notification_url` na order: a URL do painel é a única. Por isso `MP_NOTIFICATION_URL` saiu da API (se ainda estiver no seu `.env`, é ignorada; pode apagar).
 
@@ -162,7 +164,7 @@ Nenhum valor real vai para arquivo versionado. `apps/api/.env` e `apps/web/.env.
 | `ORDER_HOLD_MINUTES`                 | `apps/api/.env`        | só para o teste (mínimo da API é 5)                | `5`                                                             |
 | `PAYMENT_RECONCILIATION_INTERVAL_MS` | `apps/api/.env`        | só para o teste (mínimo da API é 30000)            | `30000`                                                         |
 | `API_URL`, `NEXT_PUBLIC_API_URL`     | `apps/web/.env.local`  | padrão do `.env.example`: `http://localhost:3333`  | não mude                                                        |
-| URL do webhook (teste e produção)    | painel do Mercado Pago | túnel + `/api/webhooks/mercadopago` (3.3)          | `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago` |
+| URL do webhook (teste e produção)    | painel do Mercado Pago | túnel + `/api/webhooks/mercadopago` (3.3)          | `https://<seu-dominio>.ngrok-free.dev/api/webhooks/mercadopago` |
 
 - Não defina `NODE_ENV=production`: produção exige `DATABASE_CA_CERT` e `WEB_ORIGIN` https, que não existem aqui.
 - **Depois de mudar o `apps/api/.env`, pare a API (Ctrl+C) e rode `npm run dev` de novo**: ela só lê o `.env` ao iniciar. Se mudar de URL de túnel, mude só no painel.
@@ -231,7 +233,7 @@ Prova o caminho “order não cancelável”: a expiração tenta cancelar uma o
 - Ação: crie um pedido com Nome **`APRO Teste`**. Quando o QR aparecer, **feche a aba** (sem a página aberta não há verificação sob demanda). Espere cerca de 6 minutos (prazo de 5 min mais o job de 60 s).
 - Esperado (log da API), nesta ordem: `1 pedido(s) expirado(s); estoque liberado.`; uma linha `Mercado Pago POST /v1/orders/{id}/cancel respondeu 4xx (código)` (anote o status e o código: é a recusa de cancelar uma order já paga); e o aviso `Pagamento ORD… do pedido <id>: alerta PAID_AFTER_EXPIRY.`
 - Esperado (banco): `orders.status = EXPIRED` (o pedido **não** vira `PAID`); `variants.reserved` voltou; `payments.status = APPROVED`; uma linha em `payment_alerts` com `alert = PAID_AFTER_EXPIRY`.
-- Depois: volte `PAYMENT_RECONCILIATION_INTERVAL_MS=30000` e reinicie a API; suba o túnel. O estorno é manual, no painel do Mercado Pago (no sandbox não há dinheiro de verdade).
+- Depois: volte `PAYMENT_RECONCILIATION_INTERVAL_MS=30000` e reinicie a API; suba o túnel. O estorno é manual, no painel do Mercado Pago (no sandbox não há dinheiro de verdade). Num estorno parcial, o esperado é o pedido seguir `PAID`, o alerta `PAYMENT_REVERSED` aparecer e o estoque ficar intacto; foi o que o estorno parcial real de R$ 0,50 mostrou em 2026-11-08.
 - Se o log mostrar `Cancelamento do Pix ORD… falhou` em vez do alerta: o Mercado Pago respondeu de um jeito que a API não reconhece como “não cancelável” (ex.: `401`, `404`, `5xx`). Anote a linha `Mercado Pago POST ... respondeu ...`; a conciliação ainda confirma o pagamento depois (com o mesmo alerta).
 - Resultado: [ ] OK [ ] FALHA
 
@@ -359,13 +361,13 @@ O preço sempre vem do banco (`priceCents`) e o `ORDER_HOLD_MINUTES` mínimo é 
 1. Confira o slug de uma categoria: `docker compose exec db psql -U otilc -d otilc -c "SELECT slug FROM categories"` (o catálogo do Drop 00 traz `tenis`, `camisetas`, `calcas`, `casacos`, `bones`; use o que o `SELECT` mostrar).
 2. Em <http://localhost:3000/admin/products/new> preencha: Nome `Produto de teste Pix`, Slug `produto-de-teste-pix`, Categoria (slug) `camisetas` (ou o do passo 1), Preço em centavos **`100`**, Status **`ACTIVE`**. Os outros campos podem ficar vazios; “Condição”, se pedir, `10`. Clique em “Salvar produto” **uma vez** e confira o aviso “Produto salvo.”. A tela continua em `/admin/products/new`; salvar de novo recusa o slug repetido.
 3. “Nova variação” só existe na tela de edição do produto: vá em <http://localhost:3000/admin>, ache “Produto de teste Pix” na lista e clique em **Abrir**. Em “Nova variação” preencha (`color` pode ficar vazio) e clique em “Criar variação”: crie `sku` `TESTE-PIX-1`, `size` `U`, `stock` `3` (sobra para refazer o caso d; cada pedido reserva 1 unidade até pagar ou expirar).
-4. Na loja, o produto aparece em <http://localhost:3000/produto/produto-de-teste-pix>. A loja guarda o catálogo em cache por 30 s: se o produto ou o tamanho `U` não aparecer, espere 30 s e recarregue. O total do pedido deve ser R$ 1,00. O menor valor que o Pix do Mercado Pago aceita não foi confirmado: se a criação falhar com R$ 1,00 (veja o log da API, `Mercado Pago POST /v1/orders respondeu NNN (código)`; se vier `400`, o código diz se é o valor mínimo ou o e-mail do pagador; anote), suba o preço para `500` (R$ 5,00) e anote.
+4. Na loja, o produto aparece em <http://localhost:3000/produto/produto-de-teste-pix>. A loja guarda o catálogo em cache por 30 s: se o produto ou o tamanho `U` não aparecer, espere 30 s e recarregue. O total do pedido deve ser R$ 1,00. O Pix do Mercado Pago de produção aceitou R$ 1,00 em 2026-11-08, no d-prod da spec-021. Se a criação falhar com R$ 1,00 mesmo assim (veja o log da API, `Mercado Pago POST /v1/orders respondeu NNN (código)`; se vier `400`, o código diz se é o valor mínimo ou o e-mail do pagador; anote), suba o preço para `500` (R$ 5,00) e anote.
 5. No fim, para tirar o produto da vitrine: altere o status para `DRAFT` (a API não tem exclusão de produto).
 
 ### 9.2 Credenciais de produção e webhook de produção
 
 1. No painel do Mercado Pago ([Suas integrações](https://www.mercadopago.com.br/developers/panel/app)), na mesma aplicação, abra **Credenciais** e selecione o ambiente de **Produção** (ativar produção pode pedir dados da conta; siga o painel). Copie o **Access Token de produção**. Não cole em nenhum lugar fora do `apps/api/.env`.
-2. Em **Webhooks → Configurar notificações**, confira a **URL modo produção** `https://<seu-dominio>.ngrok-free.app/api/webhooks/mercadopago` com o evento **Order (Mercado Pago)** (3.3) e salve. Revele a **assinatura secreta de produção** (ela é **diferente** da de teste).
+2. Em **Webhooks → Configurar notificações**, confira a **URL modo produção** `https://<seu-dominio>.ngrok-free.dev/api/webhooks/mercadopago` com o evento **Order (Mercado Pago)** (3.3) e salve. Revele a **assinatura secreta de produção** (ela é **diferente** da de teste).
 3. Anote os valores antigos (de teste) em um bloco de notas **fora do repositório**, só para o passo 9.5.
 
 ### 9.3 Trocar o `.env` e subir
@@ -379,7 +381,7 @@ Esta é a primeira prova real de webhook de order: o sandbox não entrega o webh
 **d-prod) Pix real pago → webhook → pedido `PAID`**
 
 - Ação: crie o pedido (caso c, com o produto de R$ 1,00). Com a página do pedido aberta, pague o Pix copia e cola pelo app do seu banco.
-- Esperado: o mesmo do caso d do sandbox: em `:4040`, `POST /api/webhooks/mercadopago?data.id=ORD…&type=order` com `200`; no banco, `orders.status = PAID`, `payments.status = APPROVED`, estoque baixado uma vez e ao menos uma linha em `payment_notifications` para a order.
+- Esperado: o mesmo do caso d do sandbox: em `:4040`, `POST /api/webhooks/mercadopago?data.id=ORD…&type=order` com `200` (a query também traz `data.external_reference`; podem chegar duas notificações para o mesmo pagamento, uma na criação e outra no pagamento, as duas com `200` e sem efeito duplicado; os ids de produção são `ORD01...` e `PAY01...`); no banco, `orders.status = PAID`, `payments.status = APPROVED`, estoque baixado uma vez e ao menos uma linha em `payment_notifications` para a order.
 - Resultado: [ ] OK [ ] FALHA
 
 ### 9.5 Voltar às credenciais de teste
