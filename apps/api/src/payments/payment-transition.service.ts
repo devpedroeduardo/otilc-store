@@ -206,13 +206,11 @@ export class PaymentTransitionService {
       if (payment.status === 'REFUNDED') return 'updated';
 
       const approvedAt = this.approvedAt(remote);
-      // Aqui `reversed` só pode ser `processed/partially_refunded`: o estorno pode reduzir o valor
-      // pago, mas zero ou acima do total reprova (spec-028). `accredited` exige o valor exato.
+      // `processed/partially_refunded` exige o valor pago exato, como `accredited` (spec-030). Na
+      // prova de produção de 2026-11-08, o estorno parcial deixou `total_paid_amount` no total, e o
+      // devolvido só apareceu em `transactions.refunds[]`, que a loja não lê.
       const paidMatches =
-        remote.paidAmountCents === null ||
-        (reversed
-          ? remote.paidAmountCents > 0 && remote.paidAmountCents <= order.totalCents
-          : remote.paidAmountCents === order.totalCents);
+        remote.paidAmountCents === null || remote.paidAmountCents === order.totalCents;
       const matches =
         remote.externalReference === order.id &&
         remote.amountCents === order.totalCents &&
@@ -280,9 +278,9 @@ export class PaymentTransitionService {
 
   /**
    * Acrescenta o alerta ao histórico, uma vez por tipo (`UNIQUE (payment_id, alert)`), e o deixa em
-   * `payments.alert` só se ela ainda estiver vazia. Alerta novo vai para o log: ids e tipo, nunca
-   * dados do cliente. Repetido, não grava nem registra nada. Também usado pela conciliação, no
-   * teto de falhas (RECONCILIATION_STOPPED).
+   * `payments.alert` só se ela ainda estiver vazia. O mesmo update grava `payments.updated_at`
+   * (spec-030). Alerta novo vai para o log: ids e tipo, nunca dados do cliente. Repetido, não grava
+   * nem registra nada. Também usado pela conciliação, no teto de falhas (RECONCILIATION_STOPPED).
    *
    * Com `reopen`, o alerta repetido que o admin já resolveu volta a abrir, com `created_at` novo,
    * e vai para o log como novo; aberto, segue intacto (spec-018). Só a conciliação reabre: ela
@@ -307,7 +305,7 @@ export class PaymentTransitionService {
     if (inserted.length === 0) return;
     await tx
       .update(payments)
-      .set({ alert: sql`COALESCE(${payments.alert}, ${a.alert})` })
+      .set({ alert: sql`COALESCE(${payments.alert}, ${a.alert})`, updatedAt: new Date() })
       .where(eq(payments.id, a.paymentId));
     this.logger.warn(`Pagamento ${a.providerPaymentId} do pedido ${a.orderId}: alerta ${a.alert}.`);
   }
