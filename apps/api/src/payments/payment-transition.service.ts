@@ -164,9 +164,11 @@ export class PaymentTransitionService {
         this.logger.warn(
           `Status "${remote.status}/${remote.statusDetail ?? ''}" sem efeito no pagamento ${providerPaymentId}; nada mudou.`,
         );
-        if (unclassified && reversed) {
-          // `charged_back/*` numa cobrança PENDING: grava só o alerta, já na primeira resposta. A
-          // cobrança, o pedido e o estoque não mudam, e a conciliação conta a falha (spec-029).
+        // `charged_back/*` numa cobrança PENDING (spec-029) ou já REFUNDED (spec-032): grava só o
+        // alerta. Cobrança, pedido e estoque não mudam; na PENDING, a conciliação conta a falha.
+        // Na REFUNDED, o alerta resolvido não reabre e a contestação fica só no log acima.
+        const refundedReversal = payment.status === 'REFUNDED' && reversed;
+        if ((unclassified && reversed) || refundedReversal) {
           await this.recordAlert(tx, {
             paymentId: payment.id,
             providerPaymentId,
@@ -174,6 +176,7 @@ export class PaymentTransitionService {
             alert: 'PAYMENT_REVERSED',
           });
         }
+        if (refundedReversal) return 'payment_reversed';
         return unclassified ? 'pending_unclassified' : 'unknown_status';
       }
 
@@ -189,16 +192,23 @@ export class PaymentTransitionService {
         // tentativa nova do mesmo pedido), e APPROVED ou REFUNDED não regridem com uma resposta
         // atrasada (ex.: `canceled` do cancelamento); APPROVED só vira REFUNDED pelo estorno, acima.
         if (payment.status !== 'PENDING' || status === 'PENDING') return 'updated';
-        if (status === 'REFUNDED') {
-          // Aprovado e estornado entre duas consultas: o pedido nunca foi pago, sem alerta.
-          this.logger.warn(
-            `Pagamento ${providerPaymentId} do pedido ${order.id} estornado antes de ser visto aprovado.`,
-          );
-        }
         await tx
           .update(payments)
           .set({ status, updatedAt: new Date() })
           .where(eq(payments.id, payment.id));
+        if (status === 'REFUNDED') {
+          // Aprovado e estornado entre duas consultas: a loja nunca viu o pagamento, o pedido e o
+          // estoque não mudam, e o dinheiro que entrou e saiu vira PAYMENT_REVERSED (spec-032).
+          this.logger.warn(
+            `Pagamento ${providerPaymentId} do pedido ${order.id} estornado antes de ser visto aprovado.`,
+          );
+          await this.recordAlert(tx, {
+            paymentId: payment.id,
+            providerPaymentId,
+            orderId: order.id,
+            alert: 'PAYMENT_REVERSED',
+          });
+        }
         return 'updated';
       }
       if (payment.status === 'APPROVED') return 'already_approved';

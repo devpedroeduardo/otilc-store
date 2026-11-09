@@ -1266,21 +1266,24 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       expect(await paymentOf(paid.orderId)).toEqual(rows[1]);
       expect(await orderStatus(neverPaid.orderId)).toBe('PENDING_PAYMENT');
       expect(await orderStatus(paid.orderId)).toBe('PAID');
-      expect(await alertsOf(neverPaid.orderId)).toEqual([]);
+      expect(await alertsOf(neverPaid.orderId)).toEqual(['PAYMENT_REVERSED']);
       expect(await alertsOf(paid.orderId)).toEqual(['PAYMENT_REVERSED']);
       // Uma unidade vendida (paid) e uma ainda reservada (neverPaid, que segue a própria expiração).
       expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 1 });
     });
 
-    it('PENDING que o MP já mostra refunded vira REFUNDED, sem alerta, com warn', async () => {
+    it('PENDING que o MP já mostra refunded vira REFUNDED, com PAYMENT_REVERSED e warn (spec-032)', async () => {
       const v = await variantWithStock('05-camiseta-preta', 2);
       const { orderId, paymentId } = await orderWithPix(v.id);
       setRemote(paymentId, mpStatus.refunded);
 
       await reconciliation.reconcile();
 
-      expect(await paymentOf(orderId)).toMatchObject({ status: 'REFUNDED', alert: null });
-      expect(await alertsOf(orderId)).toEqual([]);
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'REFUNDED',
+        alert: 'PAYMENT_REVERSED',
+      });
+      expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
       expect(await orderStatus(orderId)).toBe('PENDING_PAYMENT');
       expect(warnings()).toContainEqual(
         expect.stringMatching(/estornado antes de ser visto aprovado/),
@@ -1288,6 +1291,225 @@ describe('Conciliação do Pix e cancelamento no Mercado Pago (integração, pro
       const logged = warnings().find((w) => w.includes('estornado antes'))!;
       expect(logged).toContain(paymentId);
       expect(logged).toContain(orderId);
+    });
+  });
+
+  describe('estorno antes da 1ª visão e contestação depois do estorno (spec-032, simulação)', () => {
+    const later = () => new Date(Date.now() + 31 * 60_000);
+    const chargedBack = [
+      ['charged_back/in_process', mpStatus.chargedBack],
+      ['charged_back/settled', { status: 'charged_back', statusDetail: 'settled' }],
+      ['charged_back/reimbursed', { status: 'charged_back', statusDetail: 'reimbursed' }],
+    ] as const;
+
+    const reversedLogs = (paymentId: string) =>
+      warnings().filter((w) => w.includes(paymentId) && w.includes('alerta PAYMENT_REVERSED'));
+
+    /** Cobrança REFUNDED sem `approved_at`, com o alerta; pedido e estoque como estavam. */
+    async function expectRefundedWithAlert(
+      orderId: string,
+      variantId: string,
+      order: OrderStatus,
+      stock: { stock: number; reserved: number },
+    ) {
+      expect(await paymentOf(orderId)).toMatchObject({
+        status: 'REFUNDED',
+        approvedAt: null,
+        alert: 'PAYMENT_REVERSED',
+        checkFailures: 0,
+        nextCheckAt: null,
+      });
+      expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      expect(await orderStatus(orderId)).toBe(order);
+      expect(await stockOf(variantId)).toEqual(stock);
+    }
+
+    function expectRefundedWarn(paymentId: string, orderId: string) {
+      expect(warnings()).toContainEqual(
+        `Pagamento ${paymentId} do pedido ${orderId} estornado antes de ser visto aprovado.`,
+      );
+      expect(reversedLogs(paymentId)).toEqual([
+        `Pagamento ${paymentId} do pedido ${orderId}: alerta PAYMENT_REVERSED.`,
+      ]);
+    }
+
+    /** Desfechos de `sync` (webhook e verificação sob demanda), na ordem das chamadas. */
+    function syncOutcomes() {
+      const spy = jest.spyOn(ctx.app.get(PaymentTransitionService), 'sync');
+      return () => Promise.all(spy.mock.results.map((r) => r.value as Promise<string>));
+    }
+
+    it('(a) conciliação: PENDING + refunded grava PAYMENT_REVERSED, zera o backoff, sem contar falha', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      await ctx.db.update(payments).set({ checkFailures: 3 }).where(eq(payments.orderId, orderId));
+      await backoffElapsed(orderId);
+      setRemote(paymentId, mpStatus.refunded);
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 1, failed: 0 });
+
+      await expectRefundedWithAlert(orderId, v.id, 'PENDING_PAYMENT', { stock: 2, reserved: 1 });
+      expectRefundedWarn(paymentId, orderId);
+    });
+
+    it('(a)(c) webhook: PENDING + refunded grava PAYMENT_REVERSED; repetido, não duplica', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, mpStatus.refunded);
+      const outcomes = syncOutcomes();
+
+      await webhook(paymentId).expect(200);
+      await expectRefundedWithAlert(orderId, v.id, 'PENDING_PAYMENT', { stock: 2, reserved: 1 });
+      const row = await paymentOf(orderId);
+
+      await webhook(paymentId).expect(200);
+      expect(await outcomes()).toEqual(['updated', 'updated']);
+      expect(await paymentOf(orderId)).toEqual(row);
+      expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      expectRefundedWarn(paymentId, orderId);
+    });
+
+    it('(a) GET /pix: PENDING + refunded grava PAYMENT_REVERSED; o pedido segue esperando', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, mpStatus.refunded);
+      mp.getSpy.mockClear();
+
+      await http().get(`/api/orders/${orderId}/pix`).set('X-Forwarded-For', nextIp()).expect(200);
+
+      expect(mp.getSpy).toHaveBeenCalledTimes(1);
+      await expectRefundedWithAlert(orderId, v.id, 'PENDING_PAYMENT', { stock: 2, reserved: 1 });
+      expectRefundedWarn(paymentId, orderId);
+    });
+
+    it('(a) cancelamento na expiração: a resposta refunded grava PAYMENT_REVERSED, pedido EXPIRED', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, mpStatus.refunded);
+
+      await ctx.app.get(OrderExpirationService).run(later());
+
+      await expect(mp.cancelSpy.mock.results[0].value).rejects.toMatchObject({
+        notCancellable: true,
+      });
+      expect(mp.getSpy).toHaveBeenCalledWith(paymentId);
+      await expectRefundedWithAlert(orderId, v.id, 'EXPIRED', { stock: 2, reserved: 0 });
+      expectRefundedWarn(paymentId, orderId);
+      expect(warnings().some((w) => w.includes('continua pendente'))).toBe(false);
+    });
+
+    it('(a) pedido já EXPIRED: o webhook refunded grava PAYMENT_REVERSED, pedido e estoque intactos', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      await ctx.app.get(OrdersService).releaseExpired(later());
+      expect(await stockOf(v.id)).toEqual({ stock: 2, reserved: 0 });
+      setRemote(paymentId, mpStatus.refunded);
+
+      await webhook(paymentId).expect(200);
+
+      await expectRefundedWithAlert(orderId, v.id, 'EXPIRED', { stock: 2, reserved: 0 });
+      expectRefundedWarn(paymentId, orderId);
+    });
+
+    it('(a) painel marca pago depois do estorno no MP: pedido PAID, cobrança REFUNDED com alerta', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, mpStatus.refunded);
+
+      await ctx.app.get(AdminOrdersService).updateStatus(orderId, 'PAID');
+
+      await expectRefundedWithAlert(orderId, v.id, 'PAID', { stock: 1, reserved: 0 });
+      expectRefundedWarn(paymentId, orderId);
+    });
+
+    it.each(chargedBack)(
+      '(b) webhook: REFUNDED sem alerta + %s grava PAYMENT_REVERSED, desfecho payment_reversed',
+      async (_label, remoteStatus) => {
+        const v = await variantWithStock('05-camiseta-preta', 2);
+        const { orderId, paymentId } = await orderWithPix(v.id);
+        // Estornada antes de ser vista aprovada, antes da spec-032: REFUNDED e nenhum alerta.
+        await ctx.db
+          .update(payments)
+          .set({ status: 'REFUNDED' })
+          .where(eq(payments.orderId, orderId));
+        expect(await alertsOf(orderId)).toEqual([]);
+        setRemote(paymentId, remoteStatus);
+        const outcomes = syncOutcomes();
+
+        await webhook(paymentId).expect(200);
+
+        expect(await outcomes()).toEqual(['payment_reversed']);
+        await expectRefundedWithAlert(orderId, v.id, 'PENDING_PAYMENT', { stock: 2, reserved: 1 });
+        expect(reversedLogs(paymentId)).toEqual([
+          `Pagamento ${paymentId} do pedido ${orderId}: alerta PAYMENT_REVERSED.`,
+        ]);
+        const seen = `"${remoteStatus.status}/${remoteStatus.statusDetail}"`;
+        expect(warnings().some((w) => w.includes(seen) && w.includes(paymentId))).toBe(true);
+
+        // Repetido: nada novo no banco nem no log.
+        const row = await paymentOf(orderId);
+        await webhook(paymentId).expect(200);
+        expect(await paymentOf(orderId)).toEqual(row);
+        expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+        expect(reversedLogs(paymentId)).toHaveLength(1);
+      },
+    );
+
+    it('(b) a conciliação não seleciona a cobrança REFUNDED: o caso só chega por webhook', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      await ctx.db
+        .update(payments)
+        .set({ status: 'REFUNDED' })
+        .where(eq(payments.orderId, orderId));
+      setRemote(paymentId, mpStatus.chargedBack);
+
+      expect(await reconciliation.reconcile()).toEqual({ checked: 0, failed: 0 });
+      expect(mp.getSpy).not.toHaveBeenCalled();
+      expect(await alertsOf(orderId)).toEqual([]);
+    });
+
+    it('(c) estorno visto antes da aprovação e depois charged_back: uma linha só de PAYMENT_REVERSED', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      setRemote(paymentId, mpStatus.refunded);
+      await webhook(paymentId).expect(200);
+      const row = await paymentOf(orderId);
+      const outcomes = syncOutcomes();
+
+      for (const [, remoteStatus] of chargedBack) {
+        setRemote(paymentId, remoteStatus);
+        await webhook(paymentId).expect(200);
+      }
+
+      expect(await outcomes()).toEqual(Array(chargedBack.length).fill('payment_reversed'));
+      expect(await paymentOf(orderId)).toEqual(row);
+      await expectRefundedWithAlert(orderId, v.id, 'PENDING_PAYMENT', { stock: 2, reserved: 1 });
+      expect(reversedLogs(paymentId)).toHaveLength(1);
+    });
+
+    it('(c) REFUNDED vinda de APPROVED + charged_back: uma linha só de PAYMENT_REVERSED', async () => {
+      const v = await variantWithStock('05-camiseta-preta', 2);
+      const { orderId, paymentId } = await orderWithPix(v.id);
+      approve(paymentId);
+      await reconciliation.reconcile();
+      setRemote(paymentId, mpStatus.refunded);
+      await webhook(paymentId).expect(200);
+      const row = await paymentOf(orderId);
+      expect(row).toMatchObject({ status: 'REFUNDED', alert: 'PAYMENT_REVERSED' });
+      const outcomes = syncOutcomes();
+
+      for (const [, remoteStatus] of chargedBack) {
+        setRemote(paymentId, remoteStatus);
+        await webhook(paymentId).expect(200);
+      }
+
+      expect(await outcomes()).toEqual(Array(chargedBack.length).fill('payment_reversed'));
+      expect(await paymentOf(orderId)).toEqual(row);
+      expect(await alertsOf(orderId)).toEqual(['PAYMENT_REVERSED']);
+      expect(await orderStatus(orderId)).toBe('PAID');
+      expect(await stockOf(v.id)).toEqual({ stock: 1, reserved: 0 });
+      expect(reversedLogs(paymentId)).toHaveLength(1);
     });
   });
 
