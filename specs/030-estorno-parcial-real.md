@@ -57,19 +57,19 @@ A Forja para e avisa a Bússola, sem ampliar a spec, em qualquer um destes casos
 
 ## Prova de aceite
 
-Os testes (b) e (d) são escritos antes da correção, e a Forja registra na nota "spec-030 Estorno parcial real" a falha deles em fb5ccf5.
+Os testes (b) e (d) são escritos antes da correção, e a Forja registra na nota "spec-030 Estorno parcial real" o resultado deles em fb5ccf5: só a (b) e o caso de 1 centavo falham na main; a (d) passa, porque a faixa da spec-028 já recusava valor acima do total.
 
 - (a) Fixture no formato real (Q2): `processed/partially_refunded` na order e no payment, `total_paid_amount` e `payments[].paid_amount` iguais ao total, `transactions.refunds[]` com `amount` 0.50 e status `processed`, `last_updated_date` posterior à aprovação. No e2e, tanto na 1ª visão quanto na passagem de uma cobrança já `APPROVED`: pedido `PAID`, alerta `PAYMENT_REVERSED`, estoque intacto.
-- (b) A fixture de valor reduzido (`payment-reconciliation.e2e-spec.ts:1895`) muda de expectativa no mesmo teste, de `PAID` para `AMOUNT_MISMATCH`, e ganha nome que diga isso (Q1). É o teste que falha em fb5ccf5. O PR explica que a mudança endurece a regra. O caso zero (`:1977`) fica como está.
+- (b) O teste de valor reduzido (`payment-reconciliation.e2e-spec.ts:1901`) passa a usar o valor reduzido como override explícito (total - 100) e muda de expectativa no mesmo teste, de `PAID` para `AMOUNT_MISMATCH`, com nome que diga isso (Q1). A fixture `partialRefund` (`:1891-1899`) passa ao formato real (valor pago igual ao total), e os testes de `:1917`, `:1934` e `:1953` mantêm as expectativas. O caso "de 1 centavo" sai do `it.each` "continua pagando" e passa a esperar `AMOUNT_MISMATCH`, pelo mesmo endurecimento. São os testes que falham em fb5ccf5. O PR explica que a mudança endurece a regra. O caso zero (`:1977`) fica como está. Desvio autorizado pela Bússola em 2026-11-09.
 - (c) Unit de parse: a resposta com `transactions.refunds[]` e `payments[].paid_amount` é lida sem erro e `paidAmountCents` vem de `total_paid_amount` (Q2).
-- (d) Valor pago acima do total em `partially_refunded` dá `AMOUNT_MISMATCH`, num caso curto (Q3).
+- (d) Valor pago acima do total em `partially_refunded` dá `AMOUNT_MISMATCH`, num caso curto (Q3): o teste que já existe em `:2007`, renomeado citando a spec-030. Ele passa em fb5ccf5.
 - (e) `updated_at` (Q6), em e2e: depois da aprovação, um alerta gravado em outra sincronização deixa `payments.updated_at` maior que o horário da aprovação; alerta repetido não muda `updated_at`.
 
 Regressão, verde antes e depois: `accredited` com valor exato e divergente, `refunded`, `charged_back` (incluindo a 029), o backoff da 028 e os testes de concorrência de estoque.
 
 ## Critérios de aceite
 
-- [ ] Provas (a) a (e) presentes e verdes, com a falha de (b) e (d) em fb5ccf5 registrada na nota da spec.
+- [ ] Provas (a) a (e) presentes e verdes, com o resultado em fb5ccf5 registrado na nota da spec: falham a (b) e o caso de 1 centavo, e a (d) passa.
 - [ ] Nenhum teste existente fora da Prova de aceite mudou de expectativa; testes de concorrência intactos.
 - [ ] `npm run db:generate -w @otilc/api` não gera migração.
 - [ ] `git diff main --stat` só mostra arquivos permitidos.
