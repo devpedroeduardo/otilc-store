@@ -275,6 +275,7 @@ Saindo de `PENDING_PAYMENT` (para `PAID` ou `CANCELED`), se o pedido tem um Pix 
 | Falha no cancelamento ou na consulta (rede, tempo esgotado, `5xx`, `429`, cobrança ainda pendente)                                    | `502`    | nada; aviso no log com o id do pedido e do pagamento                                    |
 | Pix `PENDING` no banco, mas o Pix está desligado neste ambiente                                                                       | `503`    | nada                                                                                    |
 | Outro Pix gerado pelo cliente entre o cancelamento e a gravação                                                                       | `409`    | nada; tentar de novo cancela o novo Pix                                                 |
+| Marcar pago com cobrança `REFUNDED` ou `PAYMENT_REVERSED`, mesmo resolvido ([spec-035](../../specs/035-marcar-pago-estornado.md))     | `409`    | nada (cancelar segue livre); o Mercado Pago só é chamado com Pix `PENDING`              |
 
 ```json
 { "statusCode": 409, "message": "Este pedido já foi pago pelo Pix.", "error": "Conflict" }

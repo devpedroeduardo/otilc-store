@@ -6,7 +6,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNotNull, or, sql } from 'drizzle-orm';
 import {
   canTransitionOrder,
   type AdminOrderDetailDto,
@@ -16,11 +16,14 @@ import {
   type Paginated,
 } from '@otilc/shared';
 import { DB, type Database } from '../db/client';
-import { orderItems, orders, payments, variants } from '../db/schema';
+import { orderItems, orders, paymentAlerts, payments, variants } from '../db/schema';
 import { applyStockEffect, stockEffects, type Tx } from '../orders/order-stock';
 import { PaymentReconciliationService } from '../payments/payment-reconciliation.service';
 
-/** Mensagens do PATCH de status quando o Pix pendente não pode ser cancelado (spec-019). */
+/**
+ * Mensagens do PATCH de status quando o Pix pendente não pode ser cancelado (spec-019) ou quando a
+ * cobrança do pedido foi estornada ou contestada (spec-035).
+ */
 export const pixCancelMessages = {
   approved: 'Este pedido já foi pago pelo Pix.',
   failed: 'Não foi possível cancelar o Pix no Mercado Pago. Tente de novo.',
@@ -28,6 +31,8 @@ export const pixCancelMessages = {
     'Este pedido tem um Pix pendente, mas o Pix está desligado neste ambiente: não é possível cancelá-lo no Mercado Pago.',
   newCharge:
     'Um novo Pix foi gerado para este pedido durante a operação. Recarregue e tente de novo.',
+  reversed:
+    'A cobrança Pix deste pedido foi estornada ou contestada no Mercado Pago; ele não pode ser marcado como pago.',
 };
 
 @Injectable()
@@ -94,6 +99,11 @@ export class AdminOrdersService {
    * Saindo de PENDING_PAYMENT (pagar ou cancelar), o Pix pendente é cancelado no Mercado Pago
    * antes, fora de qualquer transação (`cancelPix`): o QR antigo deixa de ser pagável e não há
    * cobrança dupla. Se o cancelamento não se confirmar, nada muda no banco.
+   *
+   * Pedido com cobrança estornada ou contestada não vira PAID (spec-035, ver `hasReversedCharge`).
+   * A leitura antes do cancelamento recusa sem chamar o Mercado Pago: num charged_back a cobrança
+   * segue PENDING e o cancelamento falharia com 502. A checagem na transação, depois do UPDATE que
+   * trava o pedido, pega o estorno que o próprio cancelamento acabou de gravar.
    */
   async updateStatus(id: string, to: OrderStatus): Promise<AdminOrderDetailDto> {
     const current = await this.db.query.orders.findFirst({
@@ -103,6 +113,9 @@ export class AdminOrdersService {
     if (!current) throw new NotFoundException('Pedido não encontrado.');
     // Transição inválida não chega ao Mercado Pago; a transação confere de novo com o estado atual.
     if (current.status === 'PENDING_PAYMENT' && canTransitionOrder(current.status, to)) {
+      if (to === 'PAID' && (await this.hasReversedCharge(this.db, id))) {
+        throw new ConflictException(pixCancelMessages.reversed);
+      }
       await this.cancelPix(id);
     }
     return this.db.transaction(async (tx) => {
@@ -130,6 +143,10 @@ export class AdminOrdersService {
         .returning({ id: orders.id });
       if (changed.length === 0) {
         throw new ConflictException(await this.conflictReason(tx, id, from, paying));
+      }
+      if (paying && (await this.hasReversedCharge(tx, id))) {
+        // Lança dentro da transação: o pedido segue PENDING_PAYMENT e o estoque não mexe.
+        throw new ConflictException(pixCancelMessages.reversed);
       }
       if (from === 'PENDING_PAYMENT' && (await this.hasPendingPix(tx, id))) {
         // O cliente gerou outro Pix depois do cancelamento. O UPDATE acima trava o pedido, e o
@@ -173,6 +190,29 @@ export class AdminOrdersService {
       .where(and(eq(payments.orderId, orderId), eq(payments.status, 'PENDING')))
       .limit(1);
     return pending !== undefined;
+  }
+
+  /**
+   * Alguma cobrança do pedido foi estornada ou contestada: status REFUNDED, ou PAYMENT_REVERSED no
+   * histórico de alertas, resolvido ou não (resolver o alerta não devolve o dinheiro). O charged_back
+   * não muda o status da cobrança, por isso o alerta conta.
+   */
+  private async hasReversedCharge(db: Database | Tx, orderId: string): Promise<boolean> {
+    const [reversed] = await db
+      .select({ id: payments.id })
+      .from(payments)
+      .leftJoin(
+        paymentAlerts,
+        and(eq(paymentAlerts.paymentId, payments.id), eq(paymentAlerts.alert, 'PAYMENT_REVERSED')),
+      )
+      .where(
+        and(
+          eq(payments.orderId, orderId),
+          or(eq(payments.status, 'REFUNDED'), isNotNull(paymentAlerts.id)),
+        ),
+      )
+      .limit(1);
+    return reversed !== undefined;
   }
 
   /** Por que o UPDATE condicional não pegou a linha (lido depois, já com o estado atual). */
