@@ -556,5 +556,72 @@ describe('Admin: painel de alertas de pagamento (integração com Postgres)', ()
         alert: 'PAYMENT_REVERSED',
       });
     });
+
+    describe('PAYMENT_REVERSED de cobrança REFUNDED resolvido não reabre (spec-032)', () => {
+      const chargedBackDetails = ['in_process', 'settled', 'reimbursed'] as const;
+
+      function setRemote(providerPaymentId: string, status: string, statusDetail: string) {
+        mp.remote.set(providerPaymentId, {
+          ...mp.remote.get(providerPaymentId)!,
+          status,
+          statusDetail,
+        });
+      }
+
+      /** Resolve o único alerta da cobrança e devolve a linha resolvida. */
+      async function resolveOnly(paymentId: string) {
+        const [alert] = await alertsOfPayment(paymentId);
+        expect(alert.alert).toBe('PAYMENT_REVERSED');
+        await post(alert.id, 'resolve').expect(200);
+        return alertRow(alert.id);
+      }
+
+      it('estornada antes de ser vista aprovada: refunded e charged_back repetidos não reabrem', async () => {
+        const v = await variantWithStock(2);
+        const { payment, providerPaymentId, orderId } = await orderWithPix(v.id);
+        setRemote(providerPaymentId, 'refunded', 'refunded');
+        await webhook(providerPaymentId).expect(200);
+        const resolved = await resolveOnly(payment.id);
+
+        await webhook(providerPaymentId).expect(200);
+        for (const detail of chargedBackDetails) {
+          setRemote(providerPaymentId, 'charged_back', detail);
+          await webhook(providerPaymentId).expect(200);
+        }
+
+        expect(await alertsOfPayment(payment.id)).toEqual([resolved]);
+        expect((await list().expect(200)).body.items).toEqual([]);
+        expect(alertWarnings(providerPaymentId, 'PAYMENT_REVERSED')).toHaveLength(1);
+        expect(await paymentOf(orderId)).toMatchObject({ status: 'REFUNDED', approvedAt: null });
+      });
+
+      it('estornada depois de paga: charged_back depois do alerta resolvido fica só no warn', async () => {
+        const v = await variantWithStock(2);
+        const { payment, providerPaymentId, orderId } = await orderWithPix(v.id);
+        mp.remote.set(providerPaymentId, {
+          ...mp.remote.get(providerPaymentId)!,
+          ...mpStatus.approved,
+          dateLastUpdated: new Date(),
+        });
+        await reconciliation.reconcile();
+        setRemote(providerPaymentId, 'refunded', 'refunded');
+        await webhook(providerPaymentId).expect(200);
+        const resolved = await resolveOnly(payment.id);
+
+        for (const detail of chargedBackDetails) {
+          setRemote(providerPaymentId, 'charged_back', detail);
+          await webhook(providerPaymentId).expect(200);
+        }
+
+        expect(await alertsOfPayment(payment.id)).toEqual([resolved]);
+        expect((await list().expect(200)).body.items).toEqual([]);
+        expect(alertWarnings(providerPaymentId, 'PAYMENT_REVERSED')).toHaveLength(1);
+        const seen = warn.mock.calls
+          .map((c) => String(c[0]))
+          .filter((w) => w.includes(providerPaymentId) && w.includes('"charged_back/'));
+        expect(seen).toHaveLength(chargedBackDetails.length);
+        expect((await paymentOf(orderId)).status).toBe('REFUNDED');
+      });
+    });
   });
 });
