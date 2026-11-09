@@ -132,11 +132,11 @@ npm run test:e2e     # integração da API com Postgres real (TEST_DATABASE_URL)
 
 Os testes de integração cobrem o catálogo (filtros, ordenação, paginação, 404 e entrada malformada) e os pedidos (preço calculado no servidor, 10 compras simultâneas, rollback de carrinho parcial, variação inexistente e expiração de reserva).
 
-O CI roda formatação, tipos, testes unitários, testes de integração com um Postgres de serviço e o build da API e da loja a cada push.
+O CI roda a cada push formatação, tipos, testes unitários, testes de integração com um Postgres de serviço e o build da API e da loja. Roda também a suíte E2E no navegador (Playwright, `npm run test:e2e:web`) e um smoke do `docker compose`: sobe as imagens dos Dockerfiles, carrega o seed e confere a API, a home da loja, o login do painel e o rewrite de `/api/admin`.
 
 ## Roadmap
 
-- [x] Monorepo, CI e Docker
+- [x] Monorepo, CI e Docker, com o `docker compose` testado no CI
 - [x] Catálogo com filtros, ordenação e paginação
 - [x] Carrinho e criação de pedido com reserva de estoque à prova de concorrência
 - [x] Expiração de pedidos não pagos
@@ -145,7 +145,7 @@ O CI roda formatação, tipos, testes unitários, testes de integração com um 
 - [x] Painel de alertas de pagamento: ver, marcar resolvido e retomar a conciliação
 - [x] Login de administrador com cookie httpOnly e permissões por papel
 - [ ] E-mail de confirmação do pedido
-- [x] Testes E2E do fluxo de compra com Playwright
+- [x] Testes E2E da loja e do painel com Playwright, rodando no CI
 - [ ] Deploy: loja na Vercel, API no Render e banco no Supabase ([runbook](docs/deploy.md))
 
 O banco de produção é Supabase (us-east-1), com RLS habilitado em todas as tabelas do `public` e sem policies: a Data API do Supabase (roles `anon` e `authenticated`) não lê nem escreve nada, e a API NestJS, única porta do banco, continua funcionando como antes. Detalhes na [spec-010](specs/010-rls-supabase.md).
