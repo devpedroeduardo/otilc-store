@@ -8,7 +8,7 @@
 
 ## Objetivo
 
-Em `processed/partially_refunded`, a loja passa a exigir `total_paid_amount` igual ao total do pedido, como já faz em `accredited`. Com o formato real do MP, o estorno parcial continua deixando o pedido `PAID` com o alerta `PAYMENT_REVERSED` e o estoque intacto, e um valor pago diferente do total cai em `AMOUNT_MISMATCH`. `recordAlert` passa a atualizar `payments.updated_at`.
+Em `processed/partially_refunded`, a loja passa a exigir `total_paid_amount` igual ao total do pedido, como já faz em `accredited`. Com o formato real do MP, o estorno parcial continua deixando o pedido `PAID` com o alerta `PAYMENT_REVERSED`, e o estorno não mexe no estoque: na 1ª visão a reserva vira venda uma vez, e numa cobrança já `APPROVED` o estoque não muda. Um valor pago diferente do total cai em `AMOUNT_MISMATCH`. `recordAlert` passa a atualizar `payments.updated_at`.
 
 ## Contexto
 
@@ -59,7 +59,7 @@ A Forja para e avisa a Bússola, sem ampliar a spec, em qualquer um destes casos
 
 Os testes (b) e (d) são escritos antes da correção, e a Forja registra na nota "spec-030 Estorno parcial real" o resultado deles em fb5ccf5: só a (b) e o caso de 1 centavo falham na main; a (d) passa, porque a faixa da spec-028 já recusava valor acima do total.
 
-- (a) Fixture no formato real (Q2): `processed/partially_refunded` na order e no payment, `total_paid_amount` e `payments[].paid_amount` iguais ao total, `transactions.refunds[]` com `amount` 0.50 e status `processed`, `last_updated_date` posterior à aprovação. No e2e, tanto na 1ª visão quanto na passagem de uma cobrança já `APPROVED`: pedido `PAID`, alerta `PAYMENT_REVERSED`, estoque intacto.
+- (a) Fixture no formato real (Q2): `processed/partially_refunded` na order e no payment, `total_paid_amount` e `payments[].paid_amount` iguais ao total, `transactions.refunds[]` com `amount` 0.50 e status `processed`, `last_updated_date` posterior à aprovação. No e2e, tanto na 1ª visão quanto na passagem de uma cobrança já `APPROVED`: pedido `PAID` e alerta `PAYMENT_REVERSED`. O estorno não mexe no estoque: na 1ª visão, o estoque baixa uma vez pela venda (a reserva vira venda); numa cobrança já `APPROVED`, ele fica intacto.
 - (b) O teste de valor reduzido (`payment-reconciliation.e2e-spec.ts:1901`) passa a usar o valor reduzido como override explícito (total - 100) e muda de expectativa no mesmo teste, de `PAID` para `AMOUNT_MISMATCH`, com nome que diga isso (Q1). A fixture `partialRefund` (`:1891-1899`) passa ao formato real (valor pago igual ao total), e os testes de `:1917`, `:1934` e `:1953` mantêm as expectativas. O caso "de 1 centavo" sai do `it.each` "continua pagando" e passa a esperar `AMOUNT_MISMATCH`, pelo mesmo endurecimento. São os testes que falham em fb5ccf5. O PR explica que a mudança endurece a regra. O caso zero (`:1977`) fica como está. Desvio autorizado pela Bússola em 2026-11-09.
 - (c) Unit de parse: a resposta com `transactions.refunds[]` e `payments[].paid_amount` é lida sem erro e `paidAmountCents` vem de `total_paid_amount` (Q2).
 - (d) Valor pago acima do total em `partially_refunded` dá `AMOUNT_MISMATCH`, num caso curto (Q3): o teste que já existe em `:2007`, renomeado citando a spec-030. Ele passa em fb5ccf5.
