@@ -60,7 +60,7 @@ test('OWNER muda o estoque pelo painel: o rewrite repassa o Origin da loja', asy
   const put = await response;
   // A chamada sai da origem da loja (rewrite do Next) e chega na API com o Origin aceito.
   expect(put.url()).toBe(`${WEB_URL}/api/admin/variants/${variant.id}/stock`);
-  expect(put.request().method()).toBe('PUT');
+  expect(put.request().method()).toBe('PATCH');
   expect(put.status()).toBe(200);
   await expect(page.getByRole('status')).toHaveText('Estoque atualizado.');
   expect(await variantOf('15-bone-trucker')).toMatchObject({ stock: 3, reserved: 0 });
