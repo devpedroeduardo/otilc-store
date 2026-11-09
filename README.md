@@ -144,7 +144,7 @@ O CI roda a cada push formatação, tipos, testes unitários, testes de integra�
 - [x] Painel administrativo: produtos, fotos, estoque por variação e pedidos
 - [x] Painel de alertas de pagamento: ver, marcar resolvido e retomar a conciliação
 - [x] Login de administrador com cookie httpOnly e permissões por papel
-- [ ] E-mail de confirmação do pedido
+- [x] E-mail de confirmação do pedido pago, com outbox no banco (envio real em produção depois de verificar o domínio no Resend)
 - [x] Testes E2E da loja e do painel com Playwright, rodando no CI
 - [ ] Deploy: loja na Vercel, API no Render e banco no Supabase ([runbook](docs/deploy.md))
 

@@ -17,6 +17,7 @@ import {
 } from '@otilc/shared';
 import { DB, type Database } from '../db/client';
 import { orderItems, orders, paymentAlerts, payments, variants } from '../db/schema';
+import { EmailOutboxService } from '../email/email-outbox.service';
 import { applyStockEffect, stockEffects, type Tx } from '../orders/order-stock';
 import { PaymentReconciliationService } from '../payments/payment-reconciliation.service';
 
@@ -40,6 +41,7 @@ export class AdminOrdersService {
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(PaymentReconciliationService) private readonly payments: PaymentReconciliationService,
+    @Inject(EmailOutboxService) private readonly email: EmailOutboxService,
   ) {}
 
   /** Pedidos do mais novo para o mais antigo, com filtro opcional de status. */
@@ -104,6 +106,8 @@ export class AdminOrdersService {
    * A leitura antes do cancelamento recusa sem chamar o Mercado Pago: num charged_back a cobrança
    * segue PENDING e o cancelamento falharia com 502. A checagem na transação, depois do UPDATE que
    * trava o pedido, pega o estorno que o próprio cancelamento acabou de gravar.
+   *
+   * Pagar grava o e-mail de confirmação na mesma transação e o dispara depois do commit (spec-036).
    */
   async updateStatus(id: string, to: OrderStatus): Promise<AdminOrderDetailDto> {
     const current = await this.db.query.orders.findFirst({
@@ -118,7 +122,8 @@ export class AdminOrdersService {
       }
       await this.cancelPix(id);
     }
-    return this.db.transaction(async (tx) => {
+    let paidNow = false;
+    const detail = await this.db.transaction(async (tx) => {
       const current = await tx.query.orders.findFirst({
         where: eq(orders.id, id),
         columns: { status: true },
@@ -158,9 +163,15 @@ export class AdminOrdersService {
       const effect = stockEffects[`${from}>${to}`];
       // Mesma ordem de trava do checkout e do job de expiração (evita deadlock).
       if (effect) await applyStockEffect(tx, id, effect);
+      if (paying) {
+        await this.email.enqueueOrderConfirmation(tx, id);
+        paidNow = true;
+      }
 
       return this.detail(tx, id);
     });
+    if (paidNow) this.email.kick();
+    return detail;
   }
 
   /**

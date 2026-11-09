@@ -20,8 +20,9 @@ export const WEBHOOK_SECRET = randomBytes(32).toString('hex');
 /**
  * Como `setupTestApp`, mas com o Pix ligado (variáveis fictícias). O cliente do Mercado Pago real
  * é criado, e os testes substituem as duas chamadas com `jest.spyOn`: nada sai para a rede.
+ * `extraEnv` acrescenta variáveis, como as do e-mail (spec-036).
  */
-export async function setupPixTestApp(): Promise<TestContext> {
+export async function setupPixTestApp(extraEnv: Record<string, string> = {}): Promise<TestContext> {
   await runMigrations(TEST_DATABASE_URL);
   const { db, pool } = createDatabase(TEST_DATABASE_URL);
   await seed(db);
@@ -32,6 +33,7 @@ export async function setupPixTestApp(): Promise<TestContext> {
       ORDER_HOLD_MINUTES: '30',
       MP_ACCESS_TOKEN: `TEST-${randomBytes(16).toString('hex')}`,
       MP_WEBHOOK_SECRET: WEBHOOK_SECRET,
+      ...extraEnv,
     }),
   );
   await app.listen(0);

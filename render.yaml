@@ -35,3 +35,13 @@ services:
         sync: false
       - key: MP_WEBHOOK_SECRET
         sync: false
+      # E-mail de confirmação (spec-036). Fica em `log` até o Pedro verificar o domínio no Resend
+      # (docs/deploy.md, seção 8). As demais o Pedro preenche no painel quando ligar o envio.
+      - key: EMAIL_PROVIDER
+        value: log
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false

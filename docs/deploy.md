@@ -12,6 +12,7 @@ API no Render, loja na Vercel, banco no Supabase (us-east-1). Este documento é 
 | Loja      | Vercel       | Painel (Root Directory `apps/web`, funções em `iad1`, previews desligados) |
 | Banco     | Supabase     | Já existe; a API entra pelo **session pooler**                             |
 | Pagamento | Mercado Pago | Credenciais de **teste** até o lançamento                                  |
+| E-mail    | Resend       | Desligado (`EMAIL_PROVIDER=log`) até o domínio ser verificado (seção 8)    |
 
 Deploy automático: a API publica sozinha depois que o CI da `main` fica verde (`checksPass`); a loja publica a cada merge na `main`. As migrações rodam no **Pre-Deploy Command** do Render, uma vez por deploy, e não mais ao subir o container. Migração com erro cancela o deploy e a versão anterior continua no ar.
 
@@ -135,3 +136,19 @@ O script só faz `GET`: não cria pedido, não faz login, não envia segredo. El
 - **Render (API):** serviço `otilc-api` → **Events** (ou Deploys) → deploy anterior que estava saudável → **Rollback**. Atenção: o rollback não desfaz migrações já aplicadas no banco. As migrações do projeto são aditivas; mesmo assim, se o problema for de migração, chame a Bússola antes de qualquer outra ação. Para impedir novo deploy automático enquanto investiga, pause o deploy automático do serviço.
 - **Vercel (loja):** projeto → **Deployments** → deploy anterior saudável → menu (⋯) → **Promote to Production** (ou **Instant Rollback**).
 - Um problema vindo de código: o caminho limpo é um PR de correção ou de revert na `main`; o deploy automático publica o conserto.
+
+## 8. Ligar o e-mail de confirmação (Resend)
+
+A API manda um e-mail de confirmação quando o pedido vira `PAID` (spec-036). Ela sobe em produção com `EMAIL_PROVIDER=log`, fixo no `render.yaml`: nesse modo nada sai para a rede, e o log do Render mostra só o id do pedido e o assunto. O envio real depende de um domínio verificado no Resend, e a OTILC ainda não tem domínio próprio.
+
+Enquanto estiver em `log`, cada pedido pago ganha uma linha `sent` em `email_outbox` sem que nenhum e-mail tenha saído. Esses clientes não recebem a confirmação depois que o envio for ligado: não existe envio retroativo.
+
+Quando tiver o domínio, faça na ordem:
+
+1. Resend → **Domains** → adicione o domínio e crie no DNS os registros que o Resend mostrar (SPF e DKIM). Crie também um registro DMARC para o domínio. Espere o Resend marcar o domínio como verificado.
+2. Resend → **API Keys** → crie uma chave com permissão só de envio (**Sending access**), restrita a esse domínio.
+3. Render → serviço `otilc-api` → **Environment**: preencha `RESEND_API_KEY` com a chave, `EMAIL_FROM` com o remetente no domínio verificado (ex. fictício: `OTILC <pedidos@loja.example.com>`) e, se quiser reply-to e contato no rodapé, `EMAIL_REPLY_TO` com o e-mail de atendimento. Sem `EMAIL_REPLY_TO`, o e-mail sai sem reply-to, sem a linha de contato e sem a frase "é só responder este e-mail".
+4. No mesmo painel, troque `EMAIL_PROVIDER` de `log` para `resend` e salve. O Render reinicia a API. Com `resend` e sem `RESEND_API_KEY` ou `EMAIL_FROM`, a API não sobe e o log diz qual variável falta.
+5. Faça um pedido de teste, pague e confira a caixa de entrada. No log do Render aparece `E-mail order_confirmation do pedido <id>: sent`.
+
+Se o e-mail não chegar, o log do Render mostra o status de cada tentativa. Erro temporário do Resend (rede, 429, 5xx) volta para a fila com espera crescente, até 5 tentativas; erro permanente (outro 4xx, como remetente fora do domínio verificado) marca a linha como `failed` na hora. O motivo fica em `email_outbox.last_error`. O pedido continua `PAID` em todos os casos. Ainda não existe reenvio pelo painel.

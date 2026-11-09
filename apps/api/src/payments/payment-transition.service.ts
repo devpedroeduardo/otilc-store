@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, eq, isNotNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/client';
+import { EmailOutboxService } from '../email/email-outbox.service';
 import { orders, paymentAlert, paymentAlerts, paymentNotifications, payments } from '../db/schema';
 import { applyStockEffect, stockEffects } from '../orders/order-stock';
 import {
@@ -56,6 +57,7 @@ export class PaymentTransitionService {
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(PIX_PROVIDER) private readonly provider: PixProvider | null,
+    @Inject(EmailOutboxService) private readonly email: EmailOutboxService,
   ) {}
 
   /**
@@ -94,13 +96,15 @@ export class PaymentTransitionService {
     return local;
   }
 
-  private apply(
+  private async apply(
     local: { id: string; orderId: string },
     remote: ProviderPayment,
     requestId?: string,
   ): Promise<SyncOutcome> {
     const providerPaymentId = remote.id;
-    return this.db.transaction(async (tx) => {
+    // Este processamento mudou o pedido para PAID: o e-mail de confirmação sai depois do commit.
+    let paidNow = false;
+    const result = await this.db.transaction(async (tx): Promise<SyncOutcome> => {
       if (requestId && !(await this.recordNotification(tx, requestId, providerPaymentId))) {
         return 'duplicate';
       }
@@ -237,7 +241,12 @@ export class PaymentTransitionService {
           .set({ status: 'PAID' })
           .where(and(eq(orders.id, order.id), eq(orders.status, 'PENDING_PAYMENT')))
           .returning({ id: orders.id });
-        if (changed.length > 0) await applyStockEffect(tx, order.id, sell);
+        if (changed.length > 0) {
+          await applyStockEffect(tx, order.id, sell);
+          // Na mesma transação: se ela desfizer, o e-mail não fica pendente (spec-036).
+          await this.email.enqueueOrderConfirmation(tx, order.id);
+          paidNow = true;
+        }
         outcome = 'paid';
       } else if (order.status === 'PAID' || order.status === 'SHIPPED') {
         // Pago por outro caminho (ex.: painel): a cobrança não paga o pedido de novo.
@@ -270,6 +279,8 @@ export class PaymentTransitionService {
       }
       return outcome;
     });
+    if (paidNow) this.email.kick();
+    return result;
   }
 
   /**

@@ -59,6 +59,14 @@ describe('RLS nas tabelas do schema public (integração com Postgres)', () => {
     ]);
   });
 
+  it('email_outbox (spec-036) existe e tem RLS habilitado, sem forçar', async () => {
+    const tables = await publicTables();
+
+    expect(tables.filter((t) => t.name === 'email_outbox')).toEqual([
+      { name: 'email_outbox', rls: true, forced: false },
+    ]);
+  });
+
   it('toda tabela do schema public tem RLS habilitado', async () => {
     const tables = await publicTables();
 

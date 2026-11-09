@@ -2812,7 +2812,7 @@ describe('migrações 0005 (histórico de alertas) e 0006 (backoff da conciliaç
     }
   });
 
-  it('banco limpo: db:migrate aplica da 0000 à 0007 de uma vez e o alerta novo é gravável', async () => {
+  it('banco limpo: db:migrate aplica da 0000 à 0008 de uma vez e o alerta novo é gravável', async () => {
     await recreateScratch();
     await runMigrations(scratchUrl());
     const { db, pool } = createDatabase(scratchUrl());
@@ -2820,7 +2820,7 @@ describe('migrações 0005 (histórico de alertas) e 0006 (backoff da conciliaç
       const { rows: applied } = await db.execute<{ total: number }>(
         sql`SELECT count(*)::int AS total FROM drizzle.__drizzle_migrations`,
       );
-      expect(applied).toEqual([{ total: 8 }]);
+      expect(applied).toEqual([{ total: 9 }]);
       const order = await insertOrder(db);
       const [payment] = await db
         .insert(payments)
