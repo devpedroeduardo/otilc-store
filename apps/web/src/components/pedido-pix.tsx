@@ -4,8 +4,11 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatBRL, pixErrorMessages, type PixChargeDto } from '@otilc/shared';
 import { createPixCharge, getPixCharge, type PixResult } from '@/lib/api';
+import { AlertIcon, CheckIcon, ClockIcon, CopyIcon } from './icons';
 
 const POLL_MS = 5_000;
+/** Prazo da reserva do pedido, usado só para a barra de tempo. */
+const RESERVATION_MS = 30 * 60_000;
 
 type View =
   | { kind: 'loading' }
@@ -139,57 +142,83 @@ export function PedidoPix({ orderId }: { orderId: string }) {
     </Link>
   );
 
-  if (view.kind === 'loading') return <p className="empty">Gerando o Pix…</p>;
+  if (view.kind === 'loading')
+    return (
+      <div className="pay" aria-busy="true">
+        <div className="skeleton" style={{ height: 380 }} />
+        <div className="skeleton" style={{ height: 380 }} />
+        <span className="waiting" style={{ gridColumn: '1 / -1' }}>
+          <span className="spinner" aria-hidden="true" />
+          Gerando o Pix…
+        </span>
+      </div>
+    );
 
   if (view.kind === 'unavailable') {
     return (
-      <div className="panel">
-        <h2>Pix indisponível</h2>
-        <p className="alert error" role="alert">
-          {pixErrorMessages.PIX_UNAVAILABLE}
-        </p>
-        <p className="muted">Seu pedido continua reservado até o fim do prazo.</p>
-        <button type="button" className="btn btn-solid" onClick={() => void start()}>
-          Tentar de novo
-        </button>
-        {backLink}
+      <div className="pay">
+        <div className="panel result bad">
+          <span className="badge-icon">
+            <AlertIcon />
+          </span>
+          <h2>Pix indisponível</h2>
+          <p className="alert error" role="alert">
+            {pixErrorMessages.PIX_UNAVAILABLE}
+          </p>
+          <p className="muted" style={{ margin: 0 }}>
+            Seu pedido continua reservado até o fim do prazo.
+          </p>
+          <button type="button" className="btn btn-solid" onClick={() => void start()}>
+            Tentar de novo
+          </button>
+          {backLink}
+        </div>
       </div>
     );
   }
 
   if (view.kind === 'notFound') {
     return (
-      <div className="panel">
-        <p className="alert error" role="alert">
-          Não encontramos este pedido.
-        </p>
-        {backLink}
+      <div className="pay">
+        <div className="panel result bad">
+          <p className="alert error" role="alert">
+            Não encontramos este pedido.
+          </p>
+          {backLink}
+        </div>
       </div>
     );
   }
 
   if (view.kind === 'notPayable') {
     return (
-      <div className="panel">
-        <h2>Pedido expirado</h2>
-        <p className="alert error" role="alert">
-          {pixErrorMessages.ORDER_NOT_PAYABLE}
-        </p>
-        {backLink}
+      <div className="pay">
+        <div className="panel result bad">
+          <span className="badge-icon">
+            <ClockIcon />
+          </span>
+          <h2>Pedido expirado</h2>
+          <p className="alert error" role="alert">
+            {pixErrorMessages.ORDER_NOT_PAYABLE}
+          </p>
+          {backLink}
+        </div>
       </div>
     );
   }
 
   if (view.kind === 'failed') {
     return (
-      <div className="panel">
-        <p className="alert error" role="alert">
-          {view.message}
-        </p>
-        <button type="button" className="btn btn-solid" onClick={() => void start()}>
-          Tentar de novo
-        </button>
-        {backLink}
+      <div className="pay">
+        <div className="panel result bad">
+          <p className="alert error" role="alert">
+            {view.message}
+          </p>
+          <button type="button" className="btn btn-solid" onClick={() => void start()}>
+            Tentar de novo
+          </button>
+          {backLink}
+        </div>
       </div>
     );
   }
@@ -198,74 +227,113 @@ export function PedidoPix({ orderId }: { orderId: string }) {
 
   if (paid) {
     return (
-      <div className="panel" role="status">
-        <h2>Pagamento confirmado</h2>
-        <p className="alert ok">Recebemos o seu Pix de {formatBRL(c.amountCents)}. Obrigado!</p>
-        {backLink}
+      <div className="pay">
+        <div className="panel result ok" role="status">
+          <span className="badge-icon">
+            <CheckIcon />
+          </span>
+          <h2>Pagamento confirmado</h2>
+          <p className="alert ok">Recebemos o seu Pix de {formatBRL(c.amountCents)}. Obrigado!</p>
+          <p className="muted" style={{ margin: 0 }}>
+            A peça agora é sua. Guarde o link desta página para consultar o pedido.
+          </p>
+          {backLink}
+        </div>
       </div>
     );
   }
 
   if (expired) {
     return (
-      <div className="panel" role="status">
-        <h2>Pedido expirado</h2>
-        <p className="alert error">{pixErrorMessages.ORDER_NOT_PAYABLE}</p>
-        {backLink}
+      <div className="pay">
+        <div className="panel result bad" role="status">
+          <span className="badge-icon">
+            <ClockIcon />
+          </span>
+          <h2>Pedido expirado</h2>
+          <p className="alert error">{pixErrorMessages.ORDER_NOT_PAYABLE}</p>
+          {backLink}
+        </div>
       </div>
     );
   }
 
   if (failedCharge) {
     return (
-      <div className="panel">
-        <h2>Pagamento não concluído</h2>
-        <p className="alert error" role="alert">
-          O Pix não foi concluído. Você ainda pode gerar um novo dentro do prazo.
-        </p>
-        <button type="button" className="btn btn-solid" onClick={() => void start()}>
-          Gerar novo Pix
-        </button>
-        {backLink}
+      <div className="pay">
+        <div className="panel result bad">
+          <span className="badge-icon">
+            <AlertIcon />
+          </span>
+          <h2>Pagamento não concluído</h2>
+          <p className="alert error" role="alert">
+            O Pix não foi concluído. Você ainda pode gerar um novo dentro do prazo.
+          </p>
+          <button type="button" className="btn btn-solid" onClick={() => void start()}>
+            Gerar novo Pix
+          </button>
+          {backLink}
+        </div>
       </div>
     );
   }
 
+  const share = Math.min(1, Math.max(0, remaining / RESERVATION_MS));
+
   return (
-    <div className="panel">
-      <h2>Aguardando pagamento</h2>
-      <div className="total">
-        <span>Total</span>
-        <span>{formatBRL(c.amountCents)}</span>
+    <div className="pay">
+      <div className="panel">
+        <h2>Aguardando pagamento</h2>
+        <div className="total">
+          <span>Total</span>
+          <span>{formatBRL(c.amountCents)}</span>
+        </div>
+        <div className={`countdown${remaining < 5 * 60_000 ? ' late' : ''}`}>
+          <p>
+            Tempo restante para pagar: <time>{formatRemaining(remaining)}</time>
+          </p>
+          <div className="meter" aria-hidden="true">
+            <i style={{ width: `${share * 100}%` }} />
+          </div>
+        </div>
+        <span className="waiting">
+          <span className="spinner" aria-hidden="true" />A confirmação aparece aqui sozinha.
+        </span>
+        <ol className="how-to">
+          <li>Abra o app do seu banco e escolha pagar com Pix.</li>
+          <li>Leia o QR code ou cole o código copia e cola.</li>
+          <li>Confira o valor e confirme. Não feche esta página.</li>
+        </ol>
       </div>
-      <p className="muted" style={{ margin: 0 }}>
-        Pague com o app do seu banco lendo o QR code ou usando o código copia e cola. A confirmação
-        aparece aqui sozinha.
-      </p>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={`data:image/png;base64,${c.qrCodeBase64}`}
-        alt="QR code do Pix"
-        width={240}
-        height={240}
-        style={{ alignSelf: 'center', background: '#fff', padding: 8, borderRadius: 8 }}
-      />
-      <div className="field">
-        <label htmlFor="pix-code" className="mono muted">
-          Pix copia e cola
-        </label>
-        <input id="pix-code" readOnly value={c.qrCode} onFocus={(e) => e.currentTarget.select()} />
+      <div className="panel">
+        <div className="qr">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`data:image/png;base64,${c.qrCodeBase64}`}
+            alt="QR code do Pix"
+            width={240}
+            height={240}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="pix-code">Pix copia e cola</label>
+          <div className="copy-row">
+            <input
+              id="pix-code"
+              readOnly
+              value={c.qrCode}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <button type="button" className="btn btn-solid" onClick={() => void copy(c.qrCode)}>
+              <CopyIcon /> Copiar
+            </button>
+          </div>
+        </div>
+        <span role="status" className={copied === 'ok' ? 'added' : 'muted'}>
+          {copied === 'ok' && 'Código copiado.'}
+          {copied === 'fail' && 'Não foi possível copiar. Selecione o código e copie manualmente.'}
+        </span>
       </div>
-      <button type="button" className="btn btn-solid" onClick={() => void copy(c.qrCode)}>
-        Copiar
-      </button>
-      <span role="status" className="muted">
-        {copied === 'ok' && 'Código copiado.'}
-        {copied === 'fail' && 'Não foi possível copiar. Selecione o código e copie manualmente.'}
-      </span>
-      <p className="mono" style={{ margin: 0 }}>
-        Tempo restante para pagar: <time>{formatRemaining(remaining)}</time>
-      </p>
     </div>
   );
 }

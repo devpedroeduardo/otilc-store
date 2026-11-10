@@ -4,12 +4,14 @@ import Link from 'next/link';
 import { useState } from 'react';
 import type { ProductDetailDto } from '@otilc/shared';
 import { useCart } from './cart-context';
+import { ArrowIcon, BagIcon, CheckIcon } from './icons';
 
 export function AddToCart({ product }: { product: ProductDetailDto }) {
   const { add, lines } = useCart();
   const options = product.variants;
   const firstAvailable = options.find((v) => v.available > 0);
   const [variantId, setVariantId] = useState(firstAvailable?.id ?? '');
+  const [justAdded, setJustAdded] = useState(false);
 
   if (product.status !== 'ACTIVE' || !firstAvailable) {
     return (
@@ -26,6 +28,7 @@ export function AddToCart({ product }: { product: ProductDetailDto }) {
 
   return (
     <form
+      className="buy"
       onSubmit={(e) => {
         e.preventDefault();
         if (!selected) return;
@@ -37,10 +40,11 @@ export function AddToCart({ product }: { product: ProductDetailDto }) {
           priceCents: product.priceCents,
           image: product.images[0]?.url ?? null,
         });
+        setJustAdded(true);
       }}
     >
       <fieldset className="sizes">
-        <legend className="mono muted">Tamanho</legend>
+        <legend>Tamanho</legend>
         {options.map((v) => (
           <label key={v.id} className="size">
             <input
@@ -55,15 +59,21 @@ export function AddToCart({ product }: { product: ProductDetailDto }) {
           </label>
         ))}
       </fieldset>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 20 }}>
-        {inCart ? (
-          <Link href="/carrinho" className="btn btn-solid">
-            Ver carrinho →
-          </Link>
-        ) : (
-          <button type="submit" className="btn btn-solid" disabled={!selected}>
-            Adicionar ao carrinho
-          </button>
+      {inCart ? (
+        <Link href="/carrinho" className="btn btn-solid">
+          Ver carrinho <ArrowIcon />
+        </Link>
+      ) : (
+        <button type="submit" className="btn btn-solid" disabled={!selected}>
+          <BagIcon /> Adicionar ao carrinho
+        </button>
+      )}
+      <div aria-live="polite">
+        {justAdded && inCart && (
+          <p className="added">
+            <CheckIcon /> Adicionada ao carrinho. Ela só fica reservada quando você finaliza o
+            pedido.
+          </p>
         )}
       </div>
     </form>

@@ -1,7 +1,9 @@
+import { AdminReveal } from '@/components/view-transition';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { adminApi } from '@/lib/admin-api';
 import { AlertActions } from '@/components/admin/alert-actions';
+import { PaymentStatus } from '@/components/admin/status';
 import {
   adminAlertQuerySchema,
   alertGuide,
@@ -56,97 +58,126 @@ export default async function AlertsPage({
     );
   }
   return (
-    <>
-      <p className="mono muted">PAGAMENTOS</p>
-      <h1 className="page-title">Alertas</h1>
-      <form className="toolbar">
-        <label>
-          Situação{' '}
-          <select name="situacao" defaultValue={query.situacao}>
-            {situations.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Tipo{' '}
-          <select name="tipo" defaultValue={query.tipo ?? ''}>
-            <option value="">Todos</option>
-            {paymentAlertTypeSchema.options.map((value) => (
-              <option key={value} value={value}>
-                {paymentAlertGuides[value].title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="btn btn-ghost">Filtrar</button>
-      </form>
-      {!page.items.length ? (
-        <p className="empty">Nenhum alerta encontrado.</p>
-      ) : (
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Tipo</th>
-                <th>Pedido</th>
-                <th>Pagamento</th>
-                <th>O que fazer</th>
-                <th>Situação</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {page.items.map((alert) => {
-                const guide = alertGuide(alert.type);
-                return (
-                  <tr key={alert.id}>
-                    <td>{dateFormat.format(new Date(alert.createdAt))}</td>
-                    <td>{guide.title}</td>
-                    <td>
-                      <Link href={`/admin/orders/${alert.order.id}`}>#{alert.order.number}</Link>
-                    </td>
-                    <td>
-                      {alert.payment.status} · {formatBRL(alert.payment.amountCents)}
-                    </td>
-                    <td>{guide.action}</td>
-                    <td>
-                      {alert.resolvedAt
-                        ? `Resolvido em ${dateFormat.format(new Date(alert.resolvedAt))}${
-                            alert.resolvedBy ? ` por ${alert.resolvedBy}` : ''
-                          }`
-                        : 'Aberto'}
-                    </td>
-                    <td>
-                      <AlertActions alert={alert} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+    <AdminReveal>
+      <div>
+        <div className="admin-heading">
+          <div>
+            <span className="muted">Pagamentos</span>
+            <h1 className="page-title">Alertas</h1>
+            <p className="sub">
+              Situações do Pix que pedem uma ação sua. Cada alerta diz o que fazer.
+            </p>
+          </div>
         </div>
-      )}
-      {page.totalPages > 1 && (
-        <nav className="toolbar" aria-label="Paginação">
-          {page.page > 1 ? (
-            <Link href={href(query, { pagina: page.page - 1 })}>Anterior</Link>
-          ) : (
-            <span />
-          )}
-          <span className="muted">
-            Página {page.page} de {page.totalPages}
-          </span>
-          {page.page < page.totalPages ? (
-            <Link href={href(query, { pagina: page.page + 1 })}>Próxima</Link>
-          ) : (
-            <span />
-          )}
+        <nav className="filters" aria-label="Situação">
+          {situations.map(([value, label]) => (
+            <Link
+              key={value}
+              href={href(query, { situacao: value, pagina: 1 })}
+              className="chip"
+              aria-current={query.situacao === value ? 'page' : undefined}
+            >
+              {label}
+            </Link>
+          ))}
         </nav>
-      )}
-    </>
+        <form className="filter-form">
+          <input type="hidden" name="situacao" value={query.situacao} />
+          <label>
+            Tipo de alerta
+            <select name="tipo" defaultValue={query.tipo ?? ''}>
+              <option value="">Todos</option>
+              {paymentAlertTypeSchema.options.map((value) => (
+                <option key={value} value={value}>
+                  {paymentAlertGuides[value].title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="btn btn-ghost btn-sm">Filtrar</button>
+        </form>
+        {!page.items.length ? (
+          <div className="empty-state">
+            <span className="badge ok lg">Tudo em dia</span>
+            <h2>Nenhum alerta encontrado</h2>
+            <p>Quando um pagamento precisar de atenção, ele aparece aqui com o passo a passo.</p>
+          </div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Tipo</th>
+                  <th>Pedido</th>
+                  <th>Pagamento</th>
+                  <th>O que fazer</th>
+                  <th>Situação</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {page.items.map((alert) => {
+                  const guide = alertGuide(alert.type);
+                  return (
+                    <tr key={alert.id}>
+                      <td className="num">{dateFormat.format(new Date(alert.createdAt))}</td>
+                      <td>
+                        <strong>{guide.title}</strong>
+                      </td>
+                      <td>
+                        <Link href={`/admin/orders/${alert.order.id}`}>#{alert.order.number}</Link>
+                      </td>
+                      <td>
+                        <PaymentStatus status={alert.payment.status} />
+                        <small className="num">{formatBRL(alert.payment.amountCents)}</small>
+                      </td>
+                      <td style={{ maxWidth: 320 }}>{guide.action}</td>
+                      <td>
+                        {alert.resolvedAt ? (
+                          <>
+                            <span className="badge ok">Resolvido</span>
+                            <small>
+                              {dateFormat.format(new Date(alert.resolvedAt))}
+                              {alert.resolvedBy ? ` por ${alert.resolvedBy}` : ''}
+                            </small>
+                          </>
+                        ) : (
+                          <span className="badge err">Aberto</span>
+                        )}
+                      </td>
+                      <td>
+                        <AlertActions alert={alert} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {page.totalPages > 1 && (
+          <nav
+            className="filters"
+            aria-label="Paginação"
+            style={{ justifyContent: 'space-between', marginTop: 16 }}
+          >
+            {page.page > 1 ? (
+              <Link href={href(query, { pagina: page.page - 1 })}>Anterior</Link>
+            ) : (
+              <span />
+            )}
+            <span className="muted">
+              Página {page.page} de {page.totalPages}
+            </span>
+            {page.page < page.totalPages ? (
+              <Link href={href(query, { pagina: page.page + 1 })}>Próxima</Link>
+            ) : (
+              <span />
+            )}
+          </nav>
+        )}
+      </div>
+    </AdminReveal>
   );
 }

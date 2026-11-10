@@ -38,7 +38,7 @@ const products: AdminProductDto[] = [
     status: 'ACTIVE',
     featured: true,
     category: { slug: 'camisetas', name: 'Camisetas' },
-    images: [],
+    images: [{ url: '/products/zara-branca-800.webp', alt: 'Camiseta Veja Além' }],
     variants: [
       { id: 'variant-demo', sku: 'CAM-VA-P', size: 'P', color: 'Preto', stock: 5, reserved: 1 },
     ],
@@ -46,6 +46,41 @@ const products: AdminProductDto[] = [
     updatedAt: '2026-10-08T12:00:00.000Z',
   },
 ];
+
+// Mais peças de exemplo, com fotos do catálogo, para o painel não parecer vazio no modo mock.
+products.push(
+  {
+    ...products[0]!,
+    id: 'product-demo-2',
+    slug: '01-air-jordan-3-retro',
+    name: 'Air Jordan 3 Retro',
+    brand: 'Nike',
+    priceCents: 70000,
+    condition: 6,
+    featured: false,
+    category: { slug: 'tenis', name: 'Tênis' },
+    images: [{ url: '/products/jordan-800.webp', alt: 'Air Jordan 3 Retro' }],
+    variants: [
+      { id: 'variant-demo-2', sku: 'AJ3-42', size: '42', color: null, stock: 1, reserved: 0 },
+    ],
+  },
+  {
+    ...products[0]!,
+    id: 'product-demo-3',
+    slug: '07-casaco',
+    name: 'Casaco Puffer',
+    brand: null,
+    priceCents: 18000,
+    condition: 8.5,
+    status: 'SOLD_OUT',
+    featured: false,
+    category: { slug: 'casacos', name: 'Casacos' },
+    images: [{ url: '/products/casaco-800.webp', alt: 'Casaco Puffer' }],
+    variants: [
+      { id: 'variant-demo-3', sku: 'CAS-M', size: 'M', color: null, stock: 0, reserved: 0 },
+    ],
+  },
+);
 const orders: AdminOrderDetailDto[] = [
   {
     id: 'order-demo',
@@ -69,6 +104,49 @@ const orders: AdminOrderDetailDto[] = [
     ],
   },
 ];
+
+orders.push(
+  {
+    ...orders[0]!,
+    id: 'order-demo-2',
+    number: 41,
+    status: 'PAID',
+    customerName: 'Bruno Lima',
+    customerEmail: 'bruno@example.com',
+    totalCents: 70000,
+    createdAt: '2026-10-07T18:20:00.000Z',
+    items: [
+      {
+        ...orders[0]!.items[0]!,
+        productName: 'Air Jordan 3 Retro',
+        sku: 'AJ3-42',
+        size: '42',
+        unitPriceCents: 70000,
+        quantity: 1,
+      },
+    ],
+  },
+  {
+    ...orders[0]!,
+    id: 'order-demo-3',
+    number: 40,
+    status: 'SHIPPED',
+    customerName: 'Carla Mendes',
+    customerEmail: 'carla@example.com',
+    totalCents: 18000,
+    createdAt: '2026-10-06T10:05:00.000Z',
+    items: [
+      {
+        ...orders[0]!.items[0]!,
+        productName: 'Casaco Puffer',
+        sku: 'CAS-M',
+        size: 'M',
+        unitPriceCents: 18000,
+        quantity: 1,
+      },
+    ],
+  },
+);
 
 const alerts: AdminAlertDto[] = [
   {

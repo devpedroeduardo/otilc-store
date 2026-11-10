@@ -1,6 +1,9 @@
+import { AdminReveal } from '@/components/view-transition';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { ProductEditor } from '@/components/admin/product-editor';
+import { ArrowIcon, ExternalIcon } from '@/components/icons';
 import { adminApi } from '@/lib/admin-api';
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -10,10 +13,27 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   ]);
   if (!product || !user) notFound();
   return (
-    <>
-      <p className="mono muted">PRODUTO · {product.id}</p>
-      <h1 className="page-title">Editar produto</h1>
-      <ProductEditor product={product} role={user.role} />
-    </>
+    <AdminReveal>
+      <div>
+        <Link href="/admin" className="admin-back">
+          <ArrowIcon /> Produtos
+        </Link>
+        <div className="admin-heading">
+          <div>
+            <h1 className="page-title">Editar produto</h1>
+            <p className="sub">{product.name}</p>
+          </div>
+          <Link
+            href={`/produto/${product.slug}`}
+            className="btn btn-ghost btn-sm"
+            target="_blank"
+            rel="noopener"
+          >
+            <ExternalIcon /> Ver na loja
+          </Link>
+        </div>
+        <ProductEditor product={product} role={user.role} />
+      </div>
+    </AdminReveal>
   );
 }

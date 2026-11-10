@@ -2,9 +2,11 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { startTransition, useState } from 'react';
 import { checkoutSchema, formatBRL, type OrderDto } from '@otilc/shared';
 import { useCart } from './cart-context';
+import { ArrowIcon, ClockIcon, ShieldIcon } from './icons';
+import { ViewTransition } from './view-transition';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3333';
 
@@ -20,20 +22,33 @@ export function Checkout() {
 
   if (order) {
     return (
-      <p className="empty" role="status">
-        Pedido nº {order.number} criado. Levando você ao pagamento…
-      </p>
+      <div className="empty-state" role="status">
+        <span className="waiting">
+          <span className="spinner" aria-hidden="true" />
+          Pedido nº {order.number} criado. Levando você ao pagamento…
+        </span>
+      </div>
     );
   }
 
-  if (!ready) return <p className="empty">Carregando o carrinho…</p>;
+  if (!ready)
+    return (
+      <div className="cart" aria-busy="true">
+        <div className="skeleton" style={{ height: 260 }} />
+        <div className="skeleton" style={{ height: 420 }} />
+        <span className="sr-only">Carregando o carrinho…</span>
+      </div>
+    );
 
   if (lines.length === 0) {
     return (
-      <div className="empty">
-        <p>Seu carrinho está vazio.</p>
-        <Link href="/" className="btn btn-ghost">
-          Ver o catálogo
+      <div className="empty-state">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="brand-eye-static" src="/brand/eye.webp" alt="" width={900} height={712} />
+        <h2>Seu carrinho está vazio</h2>
+        <p>As peças são únicas. Quando uma te chamar a atenção, ela vem para cá.</p>
+        <Link href="/#pecas" className="btn btn-solid">
+          Ver o catálogo <ArrowIcon />
         </Link>
       </div>
     );
@@ -95,30 +110,44 @@ export function Checkout() {
 
   return (
     <div className="cart">
-      <ul className="cart-list" aria-label="Itens no carrinho">
-        {lines.map((l) => (
-          <li key={l.variantId} className="cart-item">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {l.image ? <img src={l.image} alt="" width={88} height={110} /> : <span />}
-            <div>
-              <Link href={`/produto/${l.slug}`}>{l.name}</Link>
-              <div className="mono muted">Tam. {l.size}</div>
-              <button type="button" className="link-btn" onClick={() => remove(l.variantId)}>
-                Remover
-              </button>
-            </div>
-            <span className="price">{formatBRL(l.priceCents * l.quantity)}</span>
-          </li>
-        ))}
-      </ul>
+      <div>
+        <ul className="cart-list" aria-label="Itens no carrinho">
+          {lines.map((l) => (
+            <ViewTransition key={l.variantId} exit="row-out" update="row-move" default="none">
+              <li className="cart-item">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {l.image ? <img src={l.image} alt="" width={88} height={110} /> : <span />}
+                <div className="details">
+                  <Link href={`/produto/${l.slug}`} className="name">
+                    {l.name}
+                  </Link>
+                  <span className="muted">Tamanho {l.size}</span>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => startTransition(() => remove(l.variantId))}
+                  >
+                    Remover
+                  </button>
+                </div>
+                <span className="price">{formatBRL(l.priceCents * l.quantity)}</span>
+              </li>
+            </ViewTransition>
+          ))}
+        </ul>
+        <p className="cart-note">
+          <ClockIcon />
+          <span>
+            Ao finalizar, as peças ficam reservadas para você por 30 minutos enquanto o Pix não é
+            pago. Depois disso voltam para a loja.
+          </span>
+        </p>
+      </div>
 
-      <form className="panel" onSubmit={onSubmit} noValidate>
-        <div className="total">
-          <span>Subtotal</span>
-          <span>{formatBRL(subtotalCents)}</span>
-        </div>
+      <form className="panel sticky" onSubmit={onSubmit} noValidate>
+        <h2>Seus dados</h2>
         <p className="muted" style={{ margin: 0 }}>
-          O valor final é confirmado pela loja ao criar o pedido.
+          Usamos só para identificar o pedido e falar com você sobre ele.
         </p>
 
         {(
@@ -129,9 +158,7 @@ export function Checkout() {
           ] as const
         ).map(([name, label, type, autoComplete]) => (
           <div className="field" key={name}>
-            <label htmlFor={name} className="mono muted">
-              {label}
-            </label>
+            <label htmlFor={name}>{label}</label>
             <input
               id={name}
               name={name}
@@ -155,9 +182,19 @@ export function Checkout() {
           </p>
         )}
 
-        <button type="submit" className="btn btn-solid" disabled={sending}>
+        <div className="total" style={{ paddingTop: 18, borderTop: '1px solid var(--line)' }}>
+          <span>Subtotal</span>
+          <span>{formatBRL(subtotalCents)}</span>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: 14 }}>
+          O valor final é confirmado pela loja ao criar o pedido.
+        </p>
+        <button type="submit" className="btn btn-solid btn-block" disabled={sending}>
           {sending ? 'Criando pedido…' : 'Finalizar pedido'}
         </button>
+        <p className="secure">
+          <ShieldIcon /> Pagamento por Pix, processado pelo Mercado Pago
+        </p>
       </form>
     </div>
   );

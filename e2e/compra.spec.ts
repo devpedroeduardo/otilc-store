@@ -42,7 +42,7 @@ test('compra: catálogo → categoria → produto → carrinho → pedido com es
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Camiseta Preta');
 
   await page.getByRole('button', { name: 'Adicionar ao carrinho' }).click();
-  await page.getByRole('link', { name: 'Ver carrinho →' }).click();
+  await page.getByRole('link', { name: 'Ver carrinho' }).click();
   await expect(page).toHaveURL(/\/carrinho$/);
   await expect(page.getByRole('list', { name: 'Itens no carrinho' })).toContainText(
     'Camiseta Preta',
