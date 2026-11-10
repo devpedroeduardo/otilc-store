@@ -9,7 +9,7 @@ import { ArrowIcon } from '@/components/icons';
 import { ProductCard } from '@/components/product-card';
 import { getCategories, getProducts } from '@/lib/api';
 import { PageTransition, ViewTransition } from '@/components/view-transition';
-import { LakeStory } from '@/components/lake-story';
+import { LiveEye } from '@/components/live-eye';
 
 export const dynamic = 'force-dynamic';
 
@@ -104,7 +104,9 @@ export default async function Home({ searchParams }: { searchParams: Search }) {
               </div>
             </div>
 
-            <LakeStory />
+            <div className="hero-eye">
+              <LiveEye variant="hero" />
+            </div>
           </div>
         </section>
 

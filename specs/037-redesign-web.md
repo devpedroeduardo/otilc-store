@@ -24,7 +24,7 @@ O Pedro achou as telas paradas e simples demais. Problemas concretos encontrados
 Loja:
 
 - Rotas da loja vão para o grupo `app/(loja)/`, com cabeçalho e rodapé no layout do grupo. As URLs não mudam.
-- Home: pilha de fotos reais das peças em leque (o único movimento automático), faixa corrida com números do drop calculados da API, grade com a primeira peça em destaque ocupando 2 colunas, card com número da peça e "Ver peça" no hover, seção "Como comprar" com os 3 passos reais da compra.
+- Home: o olho vivo da marca no topo (detalhes abaixo), faixa corrida com números do drop calculados da API, grade com a primeira peça em destaque ocupando 2 colunas, card com número da peça e "Ver peça" no hover, seção "Como comprar" com os 3 passos reais da compra.
 - Produto: trilha de navegação, galeria com miniaturas e zoom, condição explicada em palavras, garantias da compra e "Mais peças" da mesma categoria.
 - Carrinho e pagamento: linha de etapas, estados vazios e de carregamento, Pix em duas colunas com barra de tempo.
 - Rodapé completo e página 404 própria.
@@ -47,17 +47,19 @@ Transições entre telas (View Transitions do React, skill `vercel-react-view-tr
 - Cabeçalho da loja e barra lateral do painel ficam parados durante as transições.
 - No Next 15.5 a API só existe com `experimental.viewTransition` e com o nome `unstable_ViewTransition`. Tudo passa por `components/view-transition.tsx`: sem a flag, ele vira um repasse e a página funciona sem animar. Navegador sem suporte também não anima.
 
-A história da marca no topo da home (`components/lake-story.tsx` + `.story` em `globals.css`):
+O olho vivo no topo da home e a logo (`components/live-eye.tsx` + `.live-eye` em `globals.css`):
 
-- Cena simbólica da história transcrita pelo José Clito, em prata e azul, sem desenhar o personagem: a luz do Otilc vai de pedra em pedra até o lago, uma gota cai do céu, ondas, um olho azul surge no reflexo, uma luz atravessa a água, o olho fica prateado, sobe até o lugar do olho da logo e vira a logo original (`logo.webp`), com reflexo no lago.
-- Dura cerca de 7 s e toca na primeira visita. Depois (ou com `prefers-reduced-motion`) abre direto no quadro final, com o botão "Ver de novo".
-- Toda a coreografia é CSS. O componente só escolhe entre tocar e mostrar o quadro final, e guarda em `localStorage` que a história já foi vista.
-- A logo da marca continua sendo a original. Uma versão em SVG foi testada e descartada pelo Pedro.
-- O olho cromado original (`eye.webp`) aparece parado no carrinho vazio, na 404 e no login.
+- A cena do lago (história da marca) saiu: o Pedro achou que não combinou com a proposta da marca.
+- A logo ganhou um olho novo, em SVG: pálpebras e sobrancelha em tubo cromado, abertura escura e funda, e um globo de prata com a pupila preta envolta por um anel do mesmo tubo das pálpebras. Referência pedida pelo Pedro: o globo do Olho do Milênio (Yu-Gi-Oh), adaptado ao cromado prata e à forma amendoada da OTILC, sem o medalhão redondo, o dourado nem os riscos gravados. As letras TILC continuam as originais.
+- O cromado do olho foi calibrado para o mesmo tom das letras (mediana de luminância ~126 contra 120 nas letras).
+- No topo da home o olho é grande e vivo: o globo segue o mouse ou o dedo, a pupila anda um pouco mais que o globo (efeito de esfera girando), pisca sozinho a cada 3 a 7 s e ao clicar, e ao passar o mouse o globo fica azul e volta a prata. Sem ponteiro por 2,5 s, passeia devagar. Com `prefers-reduced-motion` fica parado.
+- No cabeçalho e no rodapé a logo é o mesmo olho, pequeno, seguindo o mouse, ao lado das letras (`tilc.webp`).
+- `logo.webp`, `logo-sm.webp`, `eye.webp`, `favicon-32.png` e `apple-touch-icon.png` são capturas desse SVG, então a logo parada e o olho animado são o mesmo desenho. O painel e as páginas com o olho parado (carrinho vazio, 404, login) usam essas imagens.
 
 ## Arquivos permitidos
 
 - `apps/web/src/**`
+- `apps/web/public/brand/**` (logo, olho e ícones gerados do SVG do olho, mais `tilc.webp`)
 - `apps/web/next.config.ts` (só a flag `experimental.viewTransition`)
 - `e2e/admin.spec.ts`, `e2e/compra.spec.ts` (só seletores que dependiam do markup antigo)
 - `specs/037-redesign-web.md`
@@ -73,11 +75,13 @@ A história da marca no topo da home (`components/lake-story.tsx` + `.story` em 
 - [x] `npm run test:e2e:web` verde (10 de 10)
 - [x] `npm run build -w @otilc/web` verde
 - [x] Nenhuma tela com rolagem horizontal em 390 px de largura
-- [x] `prefers-reduced-motion` desliga leque, faixa corrida e transições
+- [x] `prefers-reduced-motion` deixa o olho vivo parado e desliga a faixa corrida e as transições
+- [x] O olho vivo anda a 60 quadros por segundo no Chromium enquanto o mouse se mexe (mediana de 16,7 ms por quadro no trace)
 
 ## Notas para o revisor
 
 - Mudanças nos E2E: o link "Ver carrinho →" perdeu a seta no texto, o detalhe do pedido mostra `Pedido #N` como título e o status em português num selo (`.order-status`). Nenhuma verificação foi removida.
 - A seção "Variações e estoque" do editor não tem nome acessível de propósito: com nome, o `getByLabel('Estoque')` do E2E encontraria dois elementos.
 - A flag `experimental.viewTransition` troca o React interno do Next pelo canal experimental. O build e os 10 E2E passaram com ela. Se aparecer qualquer problema em produção, desligar a flag tira só as animações. Na migração para o Next 16.2, a flag sai e o `<Link transitionTypes>` permite slides com direção (ir e voltar).
+- Desempenho do olho: o cromado sai de filtros de luz do SVG, caros. Por isso o olho é uma pilha de camadas desenhadas uma vez e movidas só com `transform`. Duas armadilhas medidas no trace e evitadas: `filter: drop-shadow` do CSS em camada parada é refeito a cada quadro (a sombra fica dentro do SVG), e `backdrop-filter` no cabeçalho era refeito a cada movimento do olho da logo (o cabeçalho passou a fundo 94% opaco, sem desfoque).
 - A tela de Pedidos faz 6 chamadas à listagem para mostrar as contagens por status. Para o volume da loja isso é barato; se crescer, vale um endpoint de resumo.

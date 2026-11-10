@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { CartLink } from './cart-link';
+import { LogoMark } from './live-eye';
 
 /** Cabeçalho da loja. Também usado pela página 404, que fica fora do grupo `(loja)`. */
 export function SiteHeader() {
@@ -11,8 +12,7 @@ export function SiteHeader() {
       <header className="site-header" style={{ viewTransitionName: 'site-header' }}>
         <div className="wrap">
           <Link href="/" className="brand" aria-label="OTILC, página inicial">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/brand/logo-sm.webp" alt="OTILC" width={120} height={28} />
+            <LogoMark />
           </Link>
           <nav className="site-nav" aria-label="Principal">
             <Link href="/#pecas">Peças</Link>
@@ -32,14 +32,9 @@ export function SiteFooter() {
     <footer className="site-footer">
       <div className="wrap footer-grid">
         <div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/logo-sm.webp"
-            alt="OTILC"
-            width={120}
-            height={28}
-            style={{ height: 28, width: 'auto', marginBottom: 16 }}
-          />
+          <div style={{ marginBottom: 16 }}>
+            <LogoMark />
+          </div>
           <p>
             Streetwear seminovo, garimpado peça por peça. Cada item tem uma unidade só: quando
             vende, não volta.

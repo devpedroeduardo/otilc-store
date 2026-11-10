@@ -159,8 +159,9 @@ em,
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgb(9 9 10 / 0.78);
-  backdrop-filter: blur(14px) saturate(1.2);
+  /* Fundo quase opaco, sem backdrop-filter: com o olho da logo se mexendo dentro do
+     cabeçalho, o desfoque do fundo era refeito a cada quadro e travava a animação. */
+  background: rgb(9 9 10 / 0.94);
   border-bottom: 1px solid var(--line);
 }
 .site-header .wrap {
@@ -1826,7 +1827,7 @@ em,
   animation: var(--vt-exit) ease-in both vt-fade reverse;
 }
 
-/* Cabeçalho da loja e barra lateral do painel ficam parados (têm backdrop-filter). */
+/* Cabeçalho da loja e barra lateral do painel ficam parados durante a transição. */
 ::view-transition-old(site-header),
 ::view-transition-old(admin-side) {
   display: none;
@@ -1865,437 +1866,102 @@ em,
   opacity: 0.2;
 }
 
-/* ---------- A história da marca no topo da home (components/lake-story.tsx) ---------- */
-/* Cena simbólica da história do José: passos de pedra em pedra até o lago, uma gota cai,
-   um olho azul surge no reflexo, fica prateado e vira a logo. Prata e azul.
-   Linha do tempo (s): passos 0.8-2.4 · gota 2,9 · ondas 3,45 · olho 3,6 · prata 4,4 ·
-   olho sobe 5,2 · logo 6,0. Com .done (já vista ou prefers-reduced-motion) mostra o quadro final. */
-.story {
-  --blue: #6fa8ff;
-  --blue-deep: #1d3a66;
+/* ---------- O olho vivo (components/live-eye.tsx) ---------- */
+/* O olho é uma pilha de camadas SVG do mesmo tamanho (fundo, globo, pupila, pálpebras,
+   sobrancelha). Cada camada é desenhada uma vez; movimento, piscada e azul usam só
+   transform/opacity, que a GPU compõe sem rodar de novo os filtros de luz do cromado.
+   Nada de filter/mix-blend-mode em quem contém as camadas que se mexem. */
+.live-eye {
   position: relative;
-  width: min(100%, 640px);
-  aspect-ratio: 6 / 5;
-  justify-self: center;
-  overflow: hidden;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--line);
-  background: #04060b;
-  isolation: isolate;
+  aspect-ratio: 472 / 340;
+  -webkit-tap-highlight-color: transparent;
+  contain: layout paint;
 }
-.story > * {
-  position: absolute;
-}
-.story .sky {
-  inset: 0 0 44% 0;
-  background:
-    radial-gradient(40% 50% at 70% 100%, rgb(111 168 255 / 0.18), transparent 70%),
-    linear-gradient(180deg, #03050a 0%, #081224 60%, #10233f 100%);
-}
-.story .star {
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: #dfe8ff;
-  animation: story-twinkle 3.2s ease-in-out infinite;
-}
-.story .horizon {
-  left: 0;
-  right: 0;
-  top: 56%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(185 200 230 / 0.55), transparent);
-}
-.story .lake {
-  inset: 56% 0 0 0;
-  background:
-    repeating-linear-gradient(180deg, rgb(160 190 240 / 0.07) 0 1px, transparent 1px 7px),
-    linear-gradient(180deg, #0c1a30 0%, #060b16 70%, #04060b 100%);
-}
-.story .shimmer {
-  inset: 57% -20% 0 -20%;
-  /* Reflexos curtos e horizontais, como luz batendo na água. */
-  background: repeating-linear-gradient(
-    96deg,
-    transparent 0 26px,
-    rgb(205 220 250 / 0.16) 26px 38px,
-    transparent 38px 71px
-  );
-  mask-image: repeating-linear-gradient(180deg, #000 0 1px, transparent 1px 11px);
-  animation: story-shimmer 14s linear infinite;
-}
-.story .stone {
-  border-radius: 50%;
-  background: radial-gradient(60% 70% at 40% 30%, #3a3f49, #14171d 70%);
-  box-shadow: 0 0.4em 0.6em rgb(0 0 0 / 0.6);
-}
-.story.play .stone {
-  animation: story-stone 0.6s var(--ease) both;
-}
-.story .stone:nth-child(1) {
-  left: 9%;
-  top: 90.3%;
-  width: 10%;
-  height: 3.4%;
-  animation-delay: 0.8s;
-}
-.story .stone:nth-child(2) {
-  left: 18.2%;
-  top: 83.7%;
-  width: 8.6%;
-  height: 3%;
-  animation-delay: 1.12s;
-}
-.story .stone:nth-child(3) {
-  left: 25.8%;
-  top: 78.10000000000001%;
-  width: 7.4%;
-  height: 2.6%;
-  animation-delay: 1.44s;
-}
-.story .stone:nth-child(4) {
-  left: 32.35%;
-  top: 73.30000000000001%;
-  width: 6.3%;
-  height: 2.2%;
-  animation-delay: 1.76s;
-}
-.story .stone:nth-child(5) {
-  left: 38.099999999999994%;
-  top: 69.25%;
-  width: 5.4%;
-  height: 1.9%;
-  animation-delay: 2.08s;
-}
-.story .stone:nth-child(6) {
-  left: 43.300000000000004%;
-  top: 65.8%;
-  width: 4.6%;
-  height: 1.6%;
-  animation-delay: 2.4s;
-}
-.story .walker {
-  width: 2.6%;
-  aspect-ratio: 1;
-  translate: -50% -50%;
-  border-radius: 50%;
-  background: radial-gradient(circle, #fff 0 30%, #bcd6ff 45%, rgb(111 168 255 / 0) 72%);
-  box-shadow: 0 0 18px 6px rgb(111 168 255 / 0.45);
-  left: 14%;
-  top: 88.94%;
-  opacity: 0;
-}
-.story.play .walker {
-  animation:
-    story-fade-in 0.4s 0.6s both,
-    story-hop 1.6s 0.8s linear both;
-}
-.story .drop {
-  left: 64%;
-  top: 0;
-  width: 1.4%;
-  aspect-ratio: 1 / 2.2;
-  translate: -50% -100%;
-  border-radius: 50% 50% 50% 50% / 70% 70% 40% 40%;
-  background: linear-gradient(180deg, #ffffff, var(--blue) 70%);
-  box-shadow: 0 0 12px rgb(111 168 255 / 0.8);
-  opacity: 0;
-}
-.story.play .drop {
-  animation: story-drop 0.55s 2.9s cubic-bezier(0.55, 0, 0.9, 0.4) both;
-}
-.story .ripple {
-  left: 64%;
-  top: 77%;
-  width: 30%;
-  aspect-ratio: 4 / 1;
-  translate: -50% -50%;
-  border-radius: 50%;
-  border: 1.5px solid rgb(190 210 245 / 0.7);
-  opacity: 0;
-  scale: 0;
-}
-.story.play .ripple {
-  animation: story-ripple 1.6s 3.45s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
-}
-.story.play .ripple.r2 {
-  animation-delay: 3.62s;
-}
-.story.play .ripple.r3 {
-  animation-delay: 3.8s;
-}
-/* O olho: surge azul no reflexo, fica prateado e sobe até o lugar do olho da logo. */
-.story .eye-fly {
-  left: 64%;
-  top: 77%;
-  width: 32%;
-  translate: -50% -50%;
-  opacity: 0;
-}
-.story .eye-fly .open {
-  position: relative;
-  transform-origin: center;
-  scale: 1 0.02;
-}
-.story .eye-fly img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.story .eye-fly .blue {
-  filter: grayscale(1) sepia(1) hue-rotate(185deg) saturate(4) brightness(1.05);
-}
-.story .eye-fly .silver {
+.le-layer {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.le-blink,
+.le-opening,
+.le-move {
+  position: absolute;
+  inset: 0;
+}
+.le-opening {
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+}
+.le-move {
+  will-change: transform;
+}
+/* Piscada: pálpebras, fundo e globo achatam no centro do olho; a sobrancelha desce um pouco. */
+.le-blink,
+.le-brow {
+  will-change: transform;
+  transition: transform 70ms ease-in;
+}
+.le-blink {
+  transform-origin: 50% 59.4%;
+}
+.live-eye.is-blinking .le-blink {
+  transform: scaleY(0.06);
+}
+.live-eye.is-blinking .le-brow {
+  transform: translateY(4.7%);
+}
+/* Azul da história da marca: um globo azul por cima do prateado, só com opacidade. */
+.le-globe-blue {
   opacity: 0;
+  will-change: opacity;
+  transition: opacity 0.7s var(--ease);
 }
-.story.play .eye-fly {
-  animation:
-    story-fade-in 0.3s 3.6s both,
-    story-eye-rise 1s 5.2s cubic-bezier(0.6, 0, 0.2, 1) both,
-    story-fade-out 0.5s 6.2s forwards;
+.live-eye.is-blue .le-globe-blue {
+  opacity: 1;
+  transition-duration: 0.15s;
 }
-.story.play .eye-fly .open {
-  animation: story-eye-open 0.7s 3.6s var(--ease) both;
+.hero-eye {
+  position: relative;
+  justify-self: center;
+  width: min(100%, 600px);
 }
-.story.play .eye-fly .silver {
-  animation: story-fade-in 0.9s 4.45s ease-in-out both;
-}
-.story .sweep {
-  inset: 56% 0 0 0;
-  background: linear-gradient(
-    100deg,
-    transparent 30%,
-    rgb(220 232 255 / 0.35) 48%,
-    transparent 66%
-  );
-  translate: -100% 0;
-  mix-blend-mode: screen;
-}
-.story.play .sweep {
-  animation: story-sweep 0.9s 4.3s ease-in-out both;
-}
-.story .logo {
-  left: 14%;
-  top: 26%;
-  width: 72%;
-  height: auto;
-  opacity: 0;
-  filter: drop-shadow(0 10px 18px rgb(0 0 0 / 0.6));
-}
-.story .logo-reflex {
-  left: 14%;
-  top: 56.5%;
-  width: 72%;
-  height: auto;
-  scale: 1 -1;
-  opacity: 0;
-  mask-image: linear-gradient(0deg, transparent 0%, #000 100%);
-  filter: blur(1.5px) brightness(0.7) sepia(0.6) hue-rotate(185deg);
-}
-.story.play .logo {
-  animation: story-logo-in 0.9s 6s var(--ease) both;
-}
-.story.play .logo-reflex {
-  animation: story-reflex-in 1.2s 6.3s ease-out both;
-}
-.story .replay {
-  right: 12px;
-  bottom: 12px;
-  z-index: 5;
-  opacity: 0;
+.hero-eye::after {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: -6%;
+  height: 12%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(185 188 194 / 0.16), transparent);
   pointer-events: none;
-  transition: opacity 0.4s;
 }
-.story.done .replay,
-.story.ended .replay {
-  opacity: 1;
-  pointer-events: auto;
+.live-eye-hero {
+  width: 100%;
+  cursor: pointer;
 }
-
-/* Quadro final: tudo já aconteceu, só o lago e as estrelas seguem vivos. */
-.story.done .stone {
-  animation: story-stone 0s both;
+/* Sem filter/drop-shadow do CSS aqui: a sombra é desenhada dentro do SVG das pálpebras. */
+.logo-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
-.story.done .walker {
-  opacity: 1;
-  left: 45.6%;
-  top: 65.16%;
+.logo-mark .live-eye {
+  height: 100%;
+  width: auto;
 }
-.story.done .logo {
-  opacity: 1;
-}
-.story.done .logo-reflex {
-  opacity: 0.28;
-}
-.story.ended .logo,
-.story.done .logo {
-  animation: story-float 6s 1s ease-in-out infinite;
-  opacity: 1;
-}
-
-@keyframes story-hop {
-  0.00% {
-    left: 14%;
-    top: 88.94%;
-  }
-  10.00% {
-    left: 18.25%;
-    top: 77.64%;
-  }
-  20.00% {
-    left: 22.5%;
-    top: 82.5%;
-  }
-  30.00% {
-    left: 26%;
-    top: 72.2%;
-  }
-  40.00% {
-    left: 29.5%;
-    top: 77.06%;
-  }
-  50.00% {
-    left: 32.5%;
-    top: 67.56%;
-  }
-  60.00% {
-    left: 35.5%;
-    top: 72.42%;
-  }
-  70.00% {
-    left: 38.15%;
-    top: 63.72%;
-  }
-  80.00% {
-    left: 40.8%;
-    top: 68.49%;
-  }
-  90.00% {
-    left: 43.2%;
-    top: 60.39%;
-  }
-  100.00% {
-    left: 45.6%;
-    top: 65.16%;
-  }
-}
-
-@keyframes story-twinkle {
-  50% {
-    opacity: 0.25;
-  }
-}
-@keyframes story-shimmer {
-  to {
-    translate: 90px 0;
-  }
-}
-@keyframes story-stone {
-  from {
-    background: radial-gradient(60% 70% at 40% 30%, #3a3f49, #14171d 70%);
-  }
-  to {
-    background: radial-gradient(60% 70% at 40% 30%, #f2f4f7, #8b919c 45%, #2a3140 80%);
-    box-shadow:
-      0 0.4em 0.6em rgb(0 0 0 / 0.6),
-      0 0 14px rgb(111 168 255 / 0.55);
-  }
-}
-@keyframes story-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes story-fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-@keyframes story-drop {
-  0% {
-    top: 0;
-    opacity: 1;
-  }
-  94% {
-    top: 77%;
-    opacity: 1;
-  }
-  100% {
-    top: 77%;
-    opacity: 0;
-  }
-}
-@keyframes story-ripple {
-  0% {
-    scale: 0.05;
-    opacity: 0.9;
-  }
-  100% {
-    scale: 1.6;
-    opacity: 0;
-  }
-}
-@keyframes story-eye-open {
-  0% {
-    scale: 1 0.02;
-  }
-  70% {
-    scale: 1 1.06;
-  }
-  100% {
-    scale: 1 1;
-  }
-}
-@keyframes story-sweep {
-  to {
-    translate: 100% 0;
-  }
-}
-/* Do reflexo até o olho da logo: centro em (29,1%; 36,6%), largura 21% da cena. */
-@keyframes story-eye-rise {
-  from {
-    left: 64%;
-    top: 77%;
-    width: 32%;
-  }
-  to {
-    left: 29.1%;
-    top: 36.6%;
-    width: 21%;
-  }
-}
-@keyframes story-logo-in {
-  from {
-    opacity: 0;
-    filter: blur(8px) drop-shadow(0 10px 18px rgb(0 0 0 / 0.6));
-  }
-  to {
-    opacity: 1;
-    filter: blur(0) drop-shadow(0 10px 18px rgb(0 0 0 / 0.6));
-  }
-}
-@keyframes story-reflex-in {
-  to {
-    opacity: 0.28;
-  }
-}
-@keyframes story-float {
-  50% {
-    translate: 0 -1.2%;
-  }
+.logo-mark img {
+  height: 100%;
+  width: auto;
 }
 @media (prefers-reduced-motion: reduce) {
-  .story .star,
-  .story .shimmer,
-  .story .logo {
-    animation: none !important;
+  .le-blink,
+  .le-brow,
+  .le-globe-blue {
+    transition: none;
   }
 }
