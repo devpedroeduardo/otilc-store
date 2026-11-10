@@ -11,7 +11,7 @@ Loja completa da OTILC, marca de roupas streetwear. Monorepo com API em NestJS, 
 
 É a segunda etapa do produto. A primeira foi a [vitrine da pré-venda](https://github.com/devpedroeduardo/otilc-landing): um site estático, sem build, que validou a marca e fechava os pedidos pelo WhatsApp. Este projeto veio quando a loja precisou de estoque controlado e pedidos de verdade, e reaproveita a identidade visual e os dados do Drop 00.
 
-> Status: em desenvolvimento. Catálogo, carrinho e criação de pedidos com reserva de estoque já funcionam. Pagamento por Pix e painel administrativo estão no [roadmap](#roadmap).
+> Status: pronto para o primeiro deploy. Catálogo, carrinho, pedidos com reserva de estoque, Pix com conciliação, painel administrativo e e-mail de confirmação já funcionam e passam no CI. Falta subir para produção (veja o [roadmap](#roadmap)).
 
 ## Arquitetura
 
@@ -65,6 +65,19 @@ Validação compartilhada. Os mesmos schemas Zod de `packages/shared` validam a 
 Segurança da API: Helmet, CORS restrito à origem da loja, limite de requisições por IP (mais baixo na criação de pedidos), corpo limitado a 20 kB, IDs de pedido em UUID aleatório e variáveis de ambiente validadas na inicialização.
 
 Vitrine com a mesma regra da pré-venda. Peças reservadas e vendidas continuam visíveis, em cinza e no fim da grade, como prova de que as peças saem.
+
+## Como o projeto é feito
+
+O código é escrito por um time de agentes de IA, e eu (Pedro) sou o Product Owner: decido prioridade e escopo, leio o diff, faço o merge e cuido de produção e segredos. Nenhum agente faz merge nem mexe em credencial.
+
+| Papel        | Agente                     | Faz                                                              |
+| ------------ | -------------------------- | ---------------------------------------------------------------- |
+| Orquestrador | Claude                     | transforma o pedido em spec, distribui o trabalho e consolida    |
+| Devs         | Claude Code                | back-end, banco, segurança e infra; front-end e documentação     |
+| Revisor      | Codex (OpenAI), só leitura | revisa todo PR; o fornecedor é sempre diferente do autor         |
+| CI/CD        | modelo leve                | vigia o CI, faz a triagem de logs e levanta fatos do repositório |
+
+Cada mudança começa como uma spec em [`specs/`](specs), com critérios de aceite, e termina num PR que só entra com o CI verde. As regras que todo agente segue estão no [`AGENTS.md`](AGENTS.md). Papéis, roteamento e o scorecard que decide quem executa e quem revisa cada tipo de tarefa estão em [`docs/agents`](docs/agents).
 
 ## Stack
 
@@ -140,7 +153,7 @@ O CI roda a cada push formatação, tipos, testes unitários, testes de integra�
 - [x] Catálogo com filtros, ordenação e paginação
 - [x] Carrinho e criação de pedido com reserva de estoque à prova de concorrência
 - [x] Expiração de pedidos não pagos
-- [ ] Pagamento por Pix com Mercado Pago (sandbox), com webhook verificado por assinatura e idempotente
+- [x] Pagamento por Pix com Mercado Pago, com webhook verificado por assinatura e idempotente, conciliação periódica e tratamento de estorno e contestação
 - [x] Painel administrativo: produtos, fotos, estoque por variação e pedidos
 - [x] Painel de alertas de pagamento: ver, marcar resolvido e retomar a conciliação
 - [x] Login de administrador com cookie httpOnly e permissões por papel
