@@ -20,11 +20,11 @@ async function openOrder(page: Page, number: number): Promise<void> {
     .filter({ hasText: `#${number}` })
     .getByRole('link', { name: 'Detalhe' })
     .click();
-  await expect(page.getByText(`PEDIDO · #${number}`)).toBeVisible();
+  await expect(page.getByRole('heading', { name: `Pedido #${number}`, exact: true })).toBeVisible();
 }
 
 /** Linha de status do detalhe do pedido (regex literais: nada de RegExp montada com variável). */
-const STATUS_LINE = { PAID: /^PAID · /, CANCELED: /^CANCELED · / } as const;
+const STATUS_LINE = { PAID: 'Pago', CANCELED: 'Cancelado' } as const;
 
 /** Muda o status pelo botão do painel e exige o 200 da API real (sem 403 do CSRF). */
 async function changeStatus(
@@ -37,7 +37,7 @@ async function changeStatus(
   );
   await page.getByRole('button', { name: button }).click();
   expect((await response).status()).toBe(200);
-  await expect(page.locator('.panel').getByText(STATUS_LINE[expected])).toBeVisible();
+  await expect(page.locator('.order-status')).toHaveText(STATUS_LINE[expected]);
 }
 
 test('acessar /admin sem sessão redireciona para o login', async ({ page }) => {

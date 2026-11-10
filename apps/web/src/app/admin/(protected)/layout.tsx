@@ -5,15 +5,23 @@ import { adminApi } from '@/lib/admin-api';
 export default async function ProtectedAdminLayout({ children }: { children: React.ReactNode }) {
   const session = await adminApi.session((await cookies()).toString());
   if (!session) redirect('/admin/login');
-  // O contador é só um aviso: se a lista falhar, o menu aparece sem número.
-  const openAlerts = await adminApi
-    .alerts({ situacao: 'abertos', porPagina: 1 }, (await cookies()).toString())
-    .then((page) => page.total)
-    .catch(() => undefined);
+  const cookie = (await cookies()).toString();
+  // Os contadores são só aviso: se uma lista falhar, o menu aparece sem o número.
+  const count = (load: () => Promise<{ total: number }>) =>
+    Promise.resolve()
+      .then(load)
+      .then((page) => page.total)
+      .catch(() => undefined);
+  const [openAlerts, pendingOrders] = await Promise.all([
+    count(() => adminApi.alerts({ situacao: 'abertos', porPagina: 1 }, cookie)),
+    count(() => adminApi.orders('PENDING_PAYMENT', cookie)),
+  ]);
   return (
-    <>
-      <AdminNav user={session} openAlerts={openAlerts} />
-      <section className="wrap admin-main">{children}</section>
-    </>
+    <div className="admin-shell">
+      <AdminNav user={session} openAlerts={openAlerts} pendingOrders={pendingOrders} />
+      <main id="conteudo" className="admin-main">
+        {children}
+      </main>
+    </div>
   );
 }

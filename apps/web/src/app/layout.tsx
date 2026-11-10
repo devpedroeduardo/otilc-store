@@ -1,7 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import Link from 'next/link';
 import { CartProvider } from '@/components/cart-context';
-import { CartLink } from '@/components/cart-link';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -21,28 +19,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..100,700..900&family=Instrument+Serif:ital@0;1&family=Space+Mono:wght@400;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..100,400..900&family=Instrument+Serif:ital@0;1&family=Space+Mono:wght@400;700&display=swap"
         />
       </head>
       <body>
-        <CartProvider>
-          <a href="#conteudo" className="sr-only">
-            Pular para o conteúdo
-          </a>
-          <header className="site-header">
-            <div className="wrap">
-              <Link href="/" className="brand" aria-label="OTILC, página inicial">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/brand/logo-sm.webp" alt="OTILC" width={120} height={28} />
-              </Link>
-              <CartLink />
-            </div>
-          </header>
-          <main id="conteudo">{children}</main>
-          <footer className="site-footer">
-            <div className="wrap mono">OTILC · Veja além</div>
-          </footer>
-        </CartProvider>
+        <CartProvider>{children}</CartProvider>
       </body>
     </html>
   );

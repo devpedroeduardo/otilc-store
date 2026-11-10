@@ -39,7 +39,7 @@ export function LoginForm() {
     }
   }
   return (
-    <form className="panel admin-form" onSubmit={submit} noValidate>
+    <form className="admin-form" onSubmit={submit} noValidate>
       <label className="field">
         E-mail
         <input
@@ -75,7 +75,7 @@ export function LoginForm() {
           {message}
         </p>
       )}
-      <button className="btn btn-solid" disabled={busy}>
+      <button className="btn btn-solid btn-block" disabled={busy}>
         {busy ? 'Entrando…' : 'Entrar'}
       </button>
     </form>
